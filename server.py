@@ -7,6 +7,7 @@ import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+import openai 
 
 load_dotenv()
 
@@ -19,7 +20,56 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+#AI NURSE Settings
 
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+# Configure Client
+ai_client = openai.OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+)
+
+@app.post("/api/analyze_fall")
+async def analyze_fall_event(data: dict):
+    """
+    Sends skeleton data to LLM to generate a Clinical Incident Report.
+    """
+    room_id = data.get("room_id")
+    
+    # We cheat a bit: We don't send all detection numbers (too token heavy).
+    # We send a summary describing the fall context.
+    prompt = f"""
+    You are a clinical AI assistant. A fall was detected in Room {room_id}.
+    The detection detected:
+    - Status: FALL DETECTED
+    - Location: Outside Safe Zone (Floor)
+    - Velocity: High (Sudden Impact)
+    
+    Write a concise, 2-sentence medical incident report for the nurse. 
+    Use professional medical terminology (e.g., "ambulatory mismatch", "rapid deceleration").
+    Do not offer advice, just state the observed event for the log.
+    """
+    
+    try:
+        response = ai_client.chat.completions.create(
+            model="meta-llama/llama-3-8b-instruct:free", # Free & Fast
+            messages=[{"role": "user", "content": prompt}],
+        )
+        report = response.choices[0].message.content
+        print(f"📝 AI REPORT: {report}")
+        
+        # Broadcast the report to the dashboard
+        await manager.broadcast(json.dumps({
+            "type": "incident_report",
+            "room_id": room_id,
+            "text": report
+        }))
+        
+        return {"report": report}
+    except Exception as e:
+        print(f"❌ AI Error: {e}")
+        return {"error": str(e)}
 # --- CONFIG ---
 # Twilio Settings
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
@@ -29,7 +79,7 @@ TO_PHONE = os.getenv("TO_PHONE_NUMBER")
 
 # Global Timers
 last_call_time = 0
-CALL_COOLDOWN = 30 # Set to 30s for demo, 3000s for dev
+CALL_COOLDOWN = 3000 # Set to 30s for demo, 3000s for dev
 
 # ═══════════════════════════════════════════════════════
 #  Per-Room State (The "Database")
