@@ -18,11 +18,11 @@ export interface Landmark {
 
 export interface SkeletonFrame {
   type: string;
-  status: "NORMAL" | "FALL";
+  status: "NORMAL" | "FALL" | "RESTING" | "ACKNOWLEDGED";
   landmarks: Landmark[];
 }
 
-export type SystemStatus = "NORMAL" | "FALL";
+export type SystemStatus = "NORMAL" | "FALL" | "RESTING" | "ACKNOWLEDGED";
 
 /* ═══════════════════════════════════════════════════════
    Skeleton Topology — STRUCTURAL BONES ONLY
@@ -92,11 +92,17 @@ function Skeleton({
   landmarks: Landmark[];
   status: SystemStatus;
 }) {
-  const isFall = status === "FALL";
-  const jointColor = isFall ? "#ff2244" : "#00e5ff";
-  const boneColor = isFall ? "#ff4466" : "#00d4ff";
-  const emissiveHex = isFall ? "#ff0000" : "#005577";
-  const emissiveIntensity = isFall ? 2.5 : 0.8;
+  const colorMap = {
+    FALL:         { joint: "#ff2244", bone: "#ff4466", emissive: "#ff0000", intensity: 2.5 },
+    ACKNOWLEDGED: { joint: "#f97316", bone: "#ea580c", emissive: "#7c2d12", intensity: 1.0 },
+    RESTING:      { joint: "#f0b840", bone: "#d4a030", emissive: "#665510", intensity: 0.6 },
+    NORMAL:       { joint: "#00e5ff", bone: "#00d4ff", emissive: "#005577", intensity: 0.8 },
+  };
+  const c = colorMap[status] ?? colorMap.NORMAL;
+  const jointColor = c.joint;
+  const boneColor = c.bone;
+  const emissiveHex = c.emissive;
+  const emissiveIntensity = c.intensity;
 
   // All 33 world-space positions (indexed by landmark ID)
   const worldPos = useMemo(
@@ -268,28 +274,59 @@ function TorsoFill({
   );
 }
 
-// ── Hospital Bed (semi-transparent wireframe box) ──────
+// ── Safe Zone — Holographic Virtual Bed ────────────────
 
-function HospitalBed() {
+function SafeZone({ status }: { status: SystemStatus }) {
+  const edgeRef = useRef<THREE.Mesh>(null);
+
+  // Gentle pulse on the wireframe edge
+  useFrame(({ clock }) => {
+    if (edgeRef.current) {
+      const mat = edgeRef.current.material as THREE.MeshStandardMaterial;
+      const base = status === "RESTING" ? 0.35 : 0.18;
+      mat.opacity = base + Math.sin(clock.elapsedTime * 2) * 0.06;
+    }
+  });
+
+  const isResting = status === "RESTING";
+  const zoneColor = isResting ? "#34d399" : "#00e5ff"; // emerald when occupied
+
   return (
-    <group position={[2.5, -2.2, 0]}>
+    <group position={[0, -1, 0]}>
+      {/* Solid fill — very faint */}
       <mesh>
-        <boxGeometry args={[2.4, 0.7, 1.2]} />
+        <boxGeometry args={[2, 0.5, 4]} />
         <meshStandardMaterial
-          color="#1a3a5c"
+          color={zoneColor}
           transparent
-          opacity={0.08}
+          opacity={isResting ? 0.06 : 0.03}
         />
       </mesh>
-      <mesh>
-        <boxGeometry args={[2.4, 0.7, 1.2]} />
+      {/* Wireframe overlay */}
+      <mesh ref={edgeRef}>
+        <boxGeometry args={[2, 0.5, 4]} />
         <meshStandardMaterial
-          color="#2a6a9c"
+          color={zoneColor}
           wireframe
           transparent
           opacity={0.2}
+          toneMapped={false}
+          emissive={isResting ? "#115533" : "#003344"}
+          emissiveIntensity={isResting ? 1.2 : 0.4}
         />
       </mesh>
+      {/* "SAFE ZONE" corner markers — 4 small spheres at top corners */}
+      {[
+        [-1, 0.25, -2],
+        [1, 0.25, -2],
+        [-1, 0.25, 2],
+        [1, 0.25, 2],
+      ].map((pos, i) => (
+        <mesh key={i} position={pos as [number, number, number]}>
+          <sphereGeometry args={[0.04, 8, 8]} />
+          <meshBasicMaterial color={zoneColor} transparent opacity={0.6} />
+        </mesh>
+      ))}
     </group>
   );
 }
@@ -310,6 +347,26 @@ function Lighting({ status }: { status: SystemStatus }) {
       if (ambientRef.current) {
         ambientRef.current.intensity = 0.08 + pulse * 0.12;
         ambientRef.current.color.set("#441111");
+      }
+    } else if (status === "ACKNOWLEDGED") {
+      // Steady orange — nurse is on the way
+      if (mainRef.current) {
+        mainRef.current.intensity = 1.0;
+        mainRef.current.color.set("#f97316");
+      }
+      if (ambientRef.current) {
+        ambientRef.current.intensity = 0.18;
+        ambientRef.current.color.set("#1a0f05");
+      }
+    } else if (status === "RESTING") {
+      // Warm, calm glow — patient safely in bed
+      if (mainRef.current) {
+        mainRef.current.intensity = 0.8;
+        mainRef.current.color.set("#f0b840");
+      }
+      if (ambientRef.current) {
+        ambientRef.current.intensity = 0.2;
+        ambientRef.current.color.set("#1a1508");
       }
     } else {
       if (mainRef.current) {
@@ -346,9 +403,11 @@ function SceneFog({ status }: { status: SystemStatus }) {
 
   useEffect(() => {
     if (fogRef.current) {
-      fogRef.current.color.set(
-        status === "FALL" ? "#1a0505" : "#070d15"
-      );
+      const fogColors: Record<string, string> = {
+        FALL: "#1a0505", ACKNOWLEDGED: "#1a0f05",
+        RESTING: "#0d0f05", NORMAL: "#070d15",
+      };
+      fogRef.current.color.set(fogColors[status] ?? "#070d15");
     }
   }, [status]);
 
@@ -358,16 +417,25 @@ function SceneFog({ status }: { status: SystemStatus }) {
 // ── Reflective Floor Grid ──────────────────────────────
 
 function FloorGrid({ status }: { status: SystemStatus }) {
-  const isFall = status === "FALL";
+  const gridColors: Record<string, { cell: string; section: string }> = {
+    FALL:         { cell: "#3a0a0a", section: "#6a1a1a" },
+    ACKNOWLEDGED: { cell: "#2a1a0a", section: "#5a3a1a" },
+    RESTING:      { cell: "#1a2a0a", section: "#3a5a1a" },
+    NORMAL:       { cell: "#0d3b4f", section: "#1a6b7a" },
+  };
+  const g = gridColors[status] ?? gridColors.NORMAL;
+  const cellColor = g.cell;
+  const sectionColor = g.section;
+
   return (
     <Grid
       position={[0, -2.8, 0]}
       cellSize={0.5}
       cellThickness={0.5}
-      cellColor={isFall ? "#3a0a0a" : "#0d3b4f"}
+      cellColor={cellColor}
       sectionSize={2.5}
       sectionThickness={1}
-      sectionColor={isFall ? "#6a1a1a" : "#1a6b7a"}
+      sectionColor={sectionColor}
       fadeDistance={18}
       fadeStrength={1.5}
       followCamera={false}
@@ -408,11 +476,13 @@ function IdlePlaceholder() {
    ═══════════════════════════════════════════════════════ */
 
 interface DigitalTwinProps {
+  roomId?: string;
   onStatusChange?: (status: SystemStatus) => void;
   onFrameData?: (data: SkeletonFrame) => void;
 }
 
 export default function DigitalTwin({
+  roomId,
   onStatusChange,
   onFrameData,
 }: DigitalTwinProps) {
@@ -441,15 +511,23 @@ export default function DigitalTwin({
 
       ws.onmessage = (event) => {
         try {
-          const data: SkeletonFrame = JSON.parse(event.data);
-          if (
-            data.type === "skeleton_update" &&
-            data.landmarks?.length > 0
-          ) {
-            setLandmarks(data.landmarks);
+          const data = JSON.parse(event.data);
+          // Filter by room if specified
+          if (roomId && data.room_id && data.room_id !== roomId) return;
+          if (data.type === "skeleton_update") {
+            const frame = data as SkeletonFrame;
+            if (frame.landmarks?.length > 0) {
+              setLandmarks(frame.landmarks);
+            } else {
+              setLandmarks([]); // tracked: false → hide avatar
+            }
+            setStatus(frame.status);
+            statusCbRef.current?.(frame.status);
+            frameCbRef.current?.(frame);
+          } else if (data.type === "status_update") {
+            // Server broadcasts this on acknowledge / reset
             setStatus(data.status);
             statusCbRef.current?.(data.status);
-            frameCbRef.current?.(data);
           }
         } catch {
           // Ignore malformed frames
@@ -474,7 +552,7 @@ export default function DigitalTwin({
       ws?.close();
       clearTimeout(reconnectTimer);
     };
-  }, []);
+  }, [roomId]);
 
   return (
     <div className="relative w-full h-full rounded-2xl overflow-hidden">
@@ -488,7 +566,13 @@ export default function DigitalTwin({
           }`}
         />
         <span className="text-[10px] font-mono tracking-wider text-slate-300 uppercase">
-          {connected ? "Live Feed" : "Reconnecting…"}
+          {connected
+            ? status === "RESTING"
+              ? "Patient Resting"
+              : status === "ACKNOWLEDGED"
+                ? "Assistance En Route"
+                : "Live Feed"
+            : "Reconnecting…"}
         </span>
       </div>
 
@@ -504,7 +588,7 @@ export default function DigitalTwin({
         <SceneFog status={status} />
         <Lighting status={status} />
         <FloorGrid status={status} />
-        <HospitalBed />
+        <SafeZone status={status} />
 
         {landmarks.length > 0 ? (
           <Skeleton landmarks={landmarks} status={status} />

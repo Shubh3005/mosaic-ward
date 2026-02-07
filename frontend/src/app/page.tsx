@@ -1,604 +1,464 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import dynamic from "next/dynamic";
-import type { SkeletonFrame, SystemStatus } from "./components/DigitalTwin";
+import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
+import type { SystemStatus } from "./components/DigitalTwin";
 
 /* ═══════════════════════════════════════════════════════
-   Dynamic import — Three.js must NOT be server-rendered
+   Ward Patient Data
    ═══════════════════════════════════════════════════════ */
 
-const DigitalTwin = dynamic(() => import("./components/DigitalTwin"), {
-  ssr: false,
-  loading: () => (
-    <div className="w-full h-full flex items-center justify-center">
-      <span className="text-cyan-400/50 font-mono text-sm animate-pulse">
-        Initializing 3D Engine…
-      </span>
-    </div>
-  ),
-});
+interface PatientInfo {
+  name: string;
+  initials: string;
+  room: string;
+  condition: string;
+  risk: "HIGH" | "MODERATE" | "LOW";
+  attending: string;
+  isLive: boolean;
+  vitals: { hr: number; spo2: number; bp: string; temp: string };
+}
 
-/* ═══════════════════════════════════════════════════════
-   Terminal simulation data
-   ═══════════════════════════════════════════════════════ */
-
-const NORMAL_LOGS = [
-  "[SYSTEM] Processing Frame…",
-  "[AI] Gait Analysis: Stable",
-  "[WEBSOCKET] Latency: 12ms",
-  "[POSE] 33 Landmarks Detected",
-  "[AI] Confidence: 98.2%",
-  "[SYSTEM] Buffer: Nominal",
-  "[HIPAA] Data Stream: Coordinates Only ✓",
-  "[AI] Stride Length: Normal Range",
-  "[SYSTEM] Memory: 124 MB",
-  "[POSE] Tracking Quality: HIGH",
-  "[WEBSOCKET] Heartbeat OK",
-  "[AI] Fall Risk Assessment: LOW",
-  "[SYSTEM] Frame Rate: 30 FPS",
-  "[HIPAA] No PII in transmission ✓",
-  "[AI] Posture Score: 94/100",
-  "[SYSTEM] GPU Utilization: 34%",
-  "[POSE] Visibility Avg: 0.92",
-  "[AI] Gait Symmetry: 97%",
-];
-
-const FALL_LOGS = [
-  "[🚨 ALERT] FALL DETECTED — Confidence: 97.3%",
-  "[SYSTEM] ⚠ Emergency Protocol ACTIVATED",
-  "[TWILIO] Dispatching Call to Dr. Ramirez…",
-  "[AI] Reclassifying Posture: HORIZONTAL",
-  "[SYSTEM] Recording Incident #1847",
-  "[AI] Impact Velocity: 1.2 m/s",
-  "[SYSTEM] Notifying Nurse Station…",
-  "[HIPAA] Incident logged — no video stored ✓",
+const PATIENTS: PatientInfo[] = [
+  {
+    name: "James R.", initials: "JR", room: "301-A",
+    condition: "Cardiac Monitoring", risk: "MODERATE",
+    attending: "Dr. Chen", isLive: false,
+    vitals: { hr: 82, spo2: 97, bp: "128/82", temp: "98.4" },
+  },
+  {
+    name: "Elena K.", initials: "EK", room: "302-B",
+    condition: "Post-op Knee Replacement", risk: "LOW",
+    attending: "Dr. Patel", isLive: false,
+    vitals: { hr: 68, spo2: 99, bp: "118/76", temp: "98.2" },
+  },
+  {
+    name: "Robert M.", initials: "RM", room: "303-C",
+    condition: "Fall Recovery", risk: "HIGH",
+    attending: "Dr. Kim", isLive: false,
+    vitals: { hr: 88, spo2: 96, bp: "132/86", temp: "98.8" },
+  },
+  {
+    name: "Martha V.", initials: "MV", room: "304-A",
+    condition: "Post-op Hip Replacement", risk: "HIGH",
+    attending: "Dr. Ramirez", isLive: true,
+    vitals: { hr: 80, spo2: 98, bp: "120/80", temp: "98.6" },
+  },
 ];
 
 /* ═══════════════════════════════════════════════════════
-   Shared Glass Panel wrapper
+   Ward Overview Page
    ═══════════════════════════════════════════════════════ */
 
-function GlassPanel({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`
-        rounded-2xl border border-slate-700/50
-        bg-slate-900/60 backdrop-blur-xl
-        shadow-[0_0_40px_-12px_rgba(0,229,255,0.08)]
-        p-5 overflow-hidden
-        ${className}
-      `}
-    >
-      {children}
-    </div>
-  );
-}
+export default function WardOverview() {
+  const [roomStatuses, setRoomStatuses] = useState<Record<string, SystemStatus>>({
+    "301-A": "NORMAL",
+    "302-B": "RESTING",
+    "303-C": "NORMAL",
+    "304-A": "NORMAL",
+  });
+  const [connected, setConnected] = useState(false);
+  const [clock, setClock] = useState(new Date());
 
-/* ═══════════════════════════════════════════════════════
-   Widget: Patient Profile Card (Top-Left)
-   ═══════════════════════════════════════════════════════ */
-
-function PatientProfile({ status }: { status: SystemStatus }) {
-  return (
-    <GlassPanel className="flex flex-col gap-4">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-cyan-500/20 to-blue-600/20 border border-cyan-500/30 flex items-center justify-center text-lg font-bold text-cyan-400 shrink-0">
-          MV
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-white font-semibold text-lg leading-tight truncate">
-            Martha V.
-          </h2>
-          <span className="text-slate-400 text-xs font-mono">
-            Patient ID: 304-A
-          </span>
-        </div>
-      </div>
-
-      {/* Details */}
-      <div className="space-y-2.5 text-sm">
-        <Row label="Ward" value="Orthopedic — Rm 304" />
-        <Row
-          label="Condition"
-          value="Post-op Hip Replacement"
-          valueClass="text-amber-400"
-        />
-        <div className="flex justify-between items-center">
-          <span className="text-slate-400">Risk Level</span>
-          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-400 border border-red-500/25 tracking-wide">
-            HIGH RISK
-          </span>
-        </div>
-        <Row label="Attending" value="Dr. Ramirez" />
-        <Row label="Admitted" value="Feb 2, 2026" />
-      </div>
-
-      {/* Footer */}
-      <div
-        className={`mt-auto pt-3 border-t border-slate-700/40 text-xs font-mono flex items-center gap-2 ${
-          status === "FALL" ? "text-red-400" : "text-emerald-400"
-        }`}
-      >
-        <span
-          className={`inline-block w-1.5 h-1.5 rounded-full ${
-            status === "FALL"
-              ? "bg-red-400 animate-pulse"
-              : "bg-emerald-400"
-          }`}
-        />
-        {status === "FALL" ? "ALERT ACTIVE" : "MONITORING ACTIVE"}
-      </div>
-    </GlassPanel>
-  );
-}
-
-function Row({
-  label,
-  value,
-  valueClass = "text-slate-200",
-}: {
-  label: string;
-  value: string;
-  valueClass?: string;
-}) {
-  return (
-    <div className="flex justify-between gap-2">
-      <span className="text-slate-500 shrink-0">{label}</span>
-      <span className={`font-medium truncate ${valueClass}`}>{value}</span>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════
-   Widget: Vital Signs HUD (Bottom-Left)
-   ═══════════════════════════════════════════════════════ */
-
-function VitalSigns({ status }: { status: SystemStatus }) {
-  const isFall = status === "FALL";
-  const waveColor = isFall ? "#ef4444" : "#00e5ff";
-  const spo2Color = isFall ? "#ef4444" : "#22d3ee";
-
-  return (
-    <GlassPanel className="flex flex-col gap-3">
-      <h3 className="text-[10px] font-mono text-slate-500 uppercase tracking-[0.2em]">
-        Vital Signs
-      </h3>
-
-      {/* Heart Rate */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="text-2xl font-bold text-white tabular-nums leading-none">
-            80{" "}
-            <span className="text-sm font-normal text-slate-500">bpm</span>
-          </div>
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">
-            Heart Rate
-          </div>
-        </div>
-        <ECGWaveform color={waveColor} />
-      </div>
-
-      <div className="h-px bg-slate-700/40" />
-
-      {/* SpO2 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="text-2xl font-bold text-white tabular-nums leading-none">
-            98
-            <span className="text-sm font-normal text-slate-500">%</span>
-          </div>
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">
-            SpO₂
-          </div>
-        </div>
-        <SineWaveform color={spo2Color} />
-      </div>
-
-      <div className="h-px bg-slate-700/40" />
-
-      {/* Blood Pressure */}
-      <div>
-        <div className="text-2xl font-bold text-white tabular-nums leading-none">
-          120/80{" "}
-          <span className="text-sm font-normal text-slate-500">mmHg</span>
-        </div>
-        <div className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">
-          Blood Pressure
-        </div>
-      </div>
-
-      <div className="h-px bg-slate-700/40" />
-
-      {/* Temp */}
-      <div>
-        <div className="text-2xl font-bold text-white tabular-nums leading-none">
-          98.6
-          <span className="text-sm font-normal text-slate-500">°F</span>
-        </div>
-        <div className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">
-          Temperature
-        </div>
-      </div>
-    </GlassPanel>
-  );
-}
-
-/** Animated ECG waveform using requestAnimationFrame + direct SVG mutation */
-function ECGWaveform({ color }: { color: string }) {
-  const polyRef = useRef<SVGPolylineElement>(null);
-
+  // Live clock
   useEffect(() => {
-    // Simplified ECG QRS pattern
-    const pattern = [
-      0, 0, 0, 0, 0, -1, 6, -2.5, 0.5, 0, 0, 0, 0, 1, 2, 1, 0, 0, 0, 0,
-    ];
-    const buffer = new Array(60).fill(0);
-    let idx = 0;
-    let lastTick = 0;
-    let handle: number;
-
-    const tick = (t: number) => {
-      if (t - lastTick > 55) {
-        buffer.shift();
-        buffer.push(pattern[idx % pattern.length]);
-        idx++;
-        lastTick = t;
-        polyRef.current?.setAttribute(
-          "points",
-          buffer.map((y, x) => `${x * 2.5},${25 - y * 3}`).join(" ")
-        );
-      }
-      handle = requestAnimationFrame(tick);
-    };
-    handle = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(handle);
-  }, []);
-
-  return (
-    <svg
-      viewBox="0 0 150 50"
-      className="w-28 h-10 shrink-0"
-      preserveAspectRatio="none"
-    >
-      <polyline
-        ref={polyRef}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-/** Smooth sine-like waveform for SpO2 */
-function SineWaveform({ color }: { color: string }) {
-  const polyRef = useRef<SVGPolylineElement>(null);
-
-  useEffect(() => {
-    const buffer = new Array(60).fill(0);
-    let phase = 0;
-    let lastTick = 0;
-    let handle: number;
-
-    const tick = (t: number) => {
-      if (t - lastTick > 55) {
-        buffer.shift();
-        buffer.push(Math.sin(phase) * 3 + Math.sin(phase * 0.3));
-        phase += 0.35;
-        lastTick = t;
-        polyRef.current?.setAttribute(
-          "points",
-          buffer.map((y, x) => `${x * 2.5},${25 - y * 3}`).join(" ")
-        );
-      }
-      handle = requestAnimationFrame(tick);
-    };
-    handle = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(handle);
-  }, []);
-
-  return (
-    <svg
-      viewBox="0 0 150 50"
-      className="w-28 h-10 shrink-0"
-      preserveAspectRatio="none"
-    >
-      <polyline
-        ref={polyRef}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════
-   Widget: Confidence Gauge (Top-Right)
-   ═══════════════════════════════════════════════════════ */
-
-function ConfidenceGauge({ status }: { status: SystemStatus }) {
-  const isFall = status === "FALL";
-  const confidence = isFall ? 97 : 98;
-  const radius = 54;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (confidence / 100) * circumference;
-  const accentColor = isFall ? "#ef4444" : "#00e5ff";
-
-  return (
-    <GlassPanel className="flex flex-col items-center justify-center gap-4">
-      <h3 className="text-[10px] font-mono text-slate-500 uppercase tracking-[0.2em] self-start">
-        AI Confidence
-      </h3>
-
-      {/* Circular gauge */}
-      <div className="relative w-36 h-36">
-        <svg
-          className="w-full h-full -rotate-90"
-          viewBox="0 0 120 120"
-        >
-          {/* Track */}
-          <circle
-            cx="60"
-            cy="60"
-            r={radius}
-            fill="none"
-            stroke="#1e293b"
-            strokeWidth="6"
-          />
-          {/* Progress arc */}
-          <circle
-            cx="60"
-            cy="60"
-            r={radius}
-            fill="none"
-            stroke={accentColor}
-            strokeWidth="6"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            className="transition-all duration-700 ease-out"
-            style={{
-              filter: `drop-shadow(0 0 8px ${accentColor})`,
-            }}
-          />
-        </svg>
-
-        {/* Center label */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          {isFall ? (
-            <span className="text-red-500 font-bold text-sm text-center animate-pulse leading-tight">
-              CRITICAL
-              <br />
-              ALERT
-            </span>
-          ) : (
-            <>
-              <span className="text-3xl font-bold text-white tabular-nums">
-                {confidence}%
-              </span>
-              <span className="text-[10px] text-slate-500 uppercase tracking-wider">
-                Stable
-              </span>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Status label */}
-      <div
-        className={`text-xs font-mono text-center ${
-          isFall ? "text-red-400 animate-pulse" : "text-cyan-400/60"
-        }`}
-      >
-        {isFall
-          ? "⚠ FALL DETECTED — ALERTING STAFF"
-          : "All systems nominal"}
-      </div>
-    </GlassPanel>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════
-   Widget: Live System Terminal (Bottom-Right)
-   ═══════════════════════════════════════════════════════ */
-
-function SystemTerminal({ status }: { status: SystemStatus }) {
-  const [logs, setLogs] = useState<string[]>([]);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const addLog = () => {
-      const now = new Date().toLocaleTimeString("en-US", {
-        hour12: false,
-      });
-      const pool = status === "FALL" ? FALL_LOGS : NORMAL_LOGS;
-      const msg = pool[Math.floor(Math.random() * pool.length)];
-      setLogs((prev) => [...prev.slice(-60), `${now} ${msg}`]);
-    };
-
-    addLog(); // First log immediately
-    const id = setInterval(addLog, 1000 + Math.random() * 800);
+    const id = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(id);
-  }, [status]);
-
-  // Auto-scroll
-  useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [logs]);
-
-  return (
-    <GlassPanel className="flex flex-col gap-2">
-      {/* Title bar */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-[10px] font-mono text-slate-500 uppercase tracking-[0.2em]">
-          System Log
-        </h3>
-        <div className="flex gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full bg-red-500/50" />
-          <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/50" />
-          <span className="w-2.5 h-2.5 rounded-full bg-green-500/50" />
-        </div>
-      </div>
-
-      {/* Log output */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed space-y-0.5 scrollbar-thin"
-      >
-        {logs.map((log, i) => (
-          <div
-            key={i}
-            className={
-              log.includes("ALERT") || log.includes("FALL")
-                ? "text-red-400"
-                : log.includes("[AI]")
-                  ? "text-cyan-400"
-                  : log.includes("[WEBSOCKET]")
-                    ? "text-emerald-400"
-                    : log.includes("[HIPAA]")
-                      ? "text-violet-400"
-                      : "text-slate-500"
-            }
-          >
-            {log}
-          </div>
-        ))}
-        {/* Blinking cursor */}
-        <span className="inline-block w-1.5 h-3.5 bg-cyan-400/70 animate-pulse" />
-      </div>
-    </GlassPanel>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════
-   Main Page — "Command Center" Bento Layout
-   ═══════════════════════════════════════════════════════ */
-
-export default function Home() {
-  const [status, setStatus] = useState<SystemStatus>("NORMAL");
-
-  const handleStatusChange = useCallback(
-    (s: SystemStatus) => setStatus(s),
-    []
-  );
-
-  // Fallback: also poll REST status endpoint
-  useEffect(() => {
-    const poll = setInterval(async () => {
-      try {
-        const res = await fetch("http://localhost:8000/api/status");
-        const data = await res.json();
-        if (data.status === "FALL" || data.status === "NORMAL") {
-          setStatus(data.status);
-        }
-      } catch {
-        // Backend offline — ignore
-      }
-    }, 2000);
-    return () => clearInterval(poll);
   }, []);
 
-  const resetSystem = async () => {
-    try {
-      await fetch("http://localhost:8000/api/reset", { method: "POST" });
-      setStatus("NORMAL");
-    } catch {
-      // offline
+  // WebSocket — receives all room updates
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let alive = true;
+
+    function connect() {
+      if (!alive) return;
+      ws = new WebSocket("ws://localhost:8000/ws/skeleton");
+
+      ws.onopen = () => setConnected(true);
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const roomId = data.room_id;
+          const status = data.status as SystemStatus;
+          if (roomId && status) {
+            setRoomStatuses((prev) => ({ ...prev, [roomId]: status }));
+          }
+        } catch { /* ignore */ }
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        if (alive) reconnectTimer = setTimeout(connect, 2000);
+      };
+
+      ws.onerror = () => ws?.close();
     }
-  };
+
+    connect();
+    return () => {
+      alive = false;
+      ws?.close();
+      clearTimeout(reconnectTimer);
+    };
+  }, []);
+
+  // Aggregate stats
+  const alertCount = Object.values(roomStatuses).filter(
+    (s) => s === "FALL" || s === "ACKNOWLEDGED"
+  ).length;
+  const restingCount = Object.values(roomStatuses).filter(
+    (s) => s === "RESTING"
+  ).length;
+
+  // Check for any active FALL (for ward-level alert bar)
+  const fallingRooms = PATIENTS.filter(
+    (p) => roomStatuses[p.room] === "FALL"
+  );
 
   return (
     <div className="h-screen w-screen bg-slate-950 text-white overflow-hidden flex flex-col">
-      {/* ═══ Header Bar ═══ */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-slate-800/70 bg-slate-950/80 backdrop-blur-sm shrink-0">
-        {/* Brand */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-[11px] font-black tracking-tight">
+      {/* ═══ Header ═══ */}
+      <header className="flex items-center justify-between px-6 py-4 border-b border-slate-800/70 bg-slate-950/80 backdrop-blur-sm shrink-0">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-xs font-black tracking-tight shadow-[0_0_20px_rgba(0,229,255,0.2)]">
             MW
           </div>
           <div>
-            <h1 className="text-sm font-bold tracking-widest uppercase">
+            <h1 className="text-lg font-bold tracking-widest uppercase">
               Mosaic Ward
             </h1>
             <p className="text-[10px] text-slate-500 font-mono tracking-wide">
-              HIPAA-Compliant Patient Monitoring · Digital Twin
+              HIPAA-Compliant Patient Monitoring · Multi-Patient Dashboard
             </p>
           </div>
         </div>
 
-        {/* Right side */}
-        <div className="flex items-center gap-4">
-          {status === "FALL" && (
-            <button
-              onClick={resetSystem}
-              className="px-4 py-1.5 text-xs font-bold rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 transition-colors cursor-pointer"
-            >
-              RESET SYSTEM
-            </button>
-          )}
-          <div
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-mono ${
-              status === "FALL"
-                ? "bg-red-500/15 text-red-400 border border-red-500/30 animate-pulse"
-                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-            }`}
-          >
+        <div className="flex items-center gap-5">
+          {/* Live clock */}
+          <div className="text-xs font-mono text-slate-500 tabular-nums">
+            {clock.toLocaleTimeString("en-US", { hour12: false })}
+          </div>
+
+          {/* Connection */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/60 border border-slate-700/40">
             <span
               className={`w-2 h-2 rounded-full ${
-                status === "FALL" ? "bg-red-500" : "bg-emerald-400"
+                connected
+                  ? "bg-emerald-400 shadow-[0_0_6px_#34d399]"
+                  : "bg-red-500 animate-pulse"
               }`}
             />
-            {status === "FALL" ? "FALL DETECTED" : "ALL CLEAR"}
+            <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+              {connected ? "Online" : "Offline"}
+            </span>
+          </div>
+
+          {/* Patient count */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/20">
+            <span className="text-sm font-bold text-cyan-400 tabular-nums">
+              {PATIENTS.length}
+            </span>
+            <span className="text-[10px] font-mono text-cyan-400/60 uppercase tracking-wider">
+              Patients
+            </span>
           </div>
         </div>
       </header>
 
-      {/* ═══ Bento Grid ═══
-          Layout:
-            [Patient Profile]  [  3D Digital Twin  ]  [Confidence Gauge]
-            [  Vital Signs   ]  [  3D Digital Twin  ]  [System Terminal ]
-      */}
-      <div className="flex-1 grid grid-cols-[340px_1fr_340px] grid-rows-2 gap-3 p-3 min-h-0">
-        {/* ── Top-Left: Patient Profile ── */}
-        <PatientProfile status={status} />
+      {/* ═══ Ward Alert Bar (if any FALL) ═══ */}
+      {fallingRooms.length > 0 && (
+        <div className="shrink-0 mx-4 mt-3 rounded-xl border border-red-500/40 bg-red-500/10 backdrop-blur-sm px-6 py-3 flex items-center justify-between animate-pulse">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🚨</span>
+            <div>
+              <p className="text-red-400 font-bold text-sm tracking-wide uppercase">
+                Active Fall Alert — {fallingRooms.length} Patient{fallingRooms.length > 1 ? "s" : ""}
+              </p>
+              <p className="text-red-400/60 text-xs font-mono">
+                {fallingRooms.map((p) => `${p.name} (Room ${p.room})`).join(" · ")}
+              </p>
+            </div>
+          </div>
+          <Link
+            href={`/patient/${fallingRooms[0].room}`}
+            className="px-5 py-2 text-xs font-black rounded-xl bg-red-600 hover:bg-red-500 text-white border border-red-400/30 shadow-[0_0_20px_rgba(239,68,68,0.3)] transition-all uppercase tracking-wider"
+          >
+            Respond Now
+          </Link>
+        </div>
+      )}
 
-        {/* ── Center: 3D Digital Twin (spans 2 rows) ── */}
-        <div className="row-span-2 rounded-2xl border border-slate-700/50 bg-slate-900/40 overflow-hidden relative">
-          <DigitalTwin onStatusChange={handleStatusChange} />
+      {/* ═══ Ward Summary Bar ═══ */}
+      <div className="shrink-0 mx-4 mt-3 flex items-center gap-6 px-5 py-2.5 rounded-xl bg-slate-900/40 border border-slate-800/50">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-emerald-400" />
+          <span className="text-xs text-slate-400 font-mono">
+            <span className="text-slate-200 font-semibold">{PATIENTS.length - alertCount - restingCount}</span> Normal
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-amber-400" />
+          <span className="text-xs text-slate-400 font-mono">
+            <span className="text-slate-200 font-semibold">{restingCount}</span> Resting
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full ${alertCount > 0 ? "bg-red-500 animate-pulse" : "bg-slate-600"}`} />
+          <span className="text-xs text-slate-400 font-mono">
+            <span className={`font-semibold ${alertCount > 0 ? "text-red-400" : "text-slate-200"}`}>{alertCount}</span> Alert{alertCount !== 1 ? "s" : ""}
+          </span>
+        </div>
+        <div className="ml-auto text-[10px] text-slate-600 font-mono">
+          WARD TELEMETRY · 10 FPS SIM · 30 FPS LIVE
+        </div>
+      </div>
 
-          {/* Scanline overlay for sci-fi feel */}
-          <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(0deg,transparent,transparent_2px,rgba(0,229,255,0.012)_2px,rgba(0,229,255,0.012)_4px)]" />
+      {/* ═══ Patient Cards Grid ═══ */}
+      <div className="flex-1 grid grid-cols-2 gap-4 p-4 min-h-0 overflow-auto">
+        {PATIENTS.map((patient) => (
+          <PatientCard
+            key={patient.room}
+            patient={patient}
+            status={roomStatuses[patient.room] ?? "NORMAL"}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-          {/* Corner frame decoration */}
-          <div className="pointer-events-none absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-cyan-500/20 rounded-tl-2xl" />
-          <div className="pointer-events-none absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-cyan-500/20 rounded-tr-2xl" />
-          <div className="pointer-events-none absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-cyan-500/20 rounded-bl-2xl" />
-          <div className="pointer-events-none absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-cyan-500/20 rounded-br-2xl" />
+/* ═══════════════════════════════════════════════════════
+   Patient Card Component
+   ═══════════════════════════════════════════════════════ */
+
+function PatientCard({
+  patient,
+  status,
+}: {
+  patient: PatientInfo;
+  status: SystemStatus;
+}) {
+  const isFall = status === "FALL";
+  const isAck = status === "ACKNOWLEDGED";
+  const isResting = status === "RESTING";
+
+  const borderColor = isFall
+    ? "border-red-500/50 shadow-[0_0_40px_-8px_rgba(239,68,68,0.25)]"
+    : isAck
+      ? "border-orange-500/40 shadow-[0_0_30px_-8px_rgba(249,115,22,0.15)]"
+      : isResting
+        ? "border-amber-500/25 shadow-[0_0_30px_-8px_rgba(240,184,64,0.08)]"
+        : "border-slate-700/50 shadow-[0_0_40px_-12px_rgba(0,229,255,0.08)]";
+
+  const riskStyles: Record<string, string> = {
+    HIGH: "bg-red-500/15 text-red-400 border-red-500/25",
+    MODERATE: "bg-amber-500/15 text-amber-400 border-amber-500/25",
+    LOW: "bg-emerald-500/15 text-emerald-400 border-emerald-500/25",
+  };
+
+  const statusConfig: Record<string, { dot: string; text: string; label: string; bg: string }> = {
+    FALL: { dot: "bg-red-500 animate-pulse", text: "text-red-400", label: "FALL DETECTED", bg: "bg-red-500/10" },
+    ACKNOWLEDGED: { dot: "bg-orange-400", text: "text-orange-400", label: "STAFF EN ROUTE", bg: "bg-orange-500/10" },
+    RESTING: { dot: "bg-amber-400", text: "text-amber-400", label: "RESTING", bg: "bg-amber-500/10" },
+    NORMAL: { dot: "bg-emerald-400", text: "text-emerald-400", label: "NORMAL", bg: "bg-emerald-500/10" },
+  };
+  const sc = statusConfig[status] ?? statusConfig.NORMAL;
+
+  return (
+    <div
+      className={`
+        rounded-2xl border bg-slate-900/60 backdrop-blur-xl
+        p-5 flex flex-col gap-4 transition-all duration-300
+        ${borderColor}
+        ${isFall ? "animate-pulse" : ""}
+      `}
+    >
+      {/* ── Card Header ── */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {/* Avatar */}
+          <div
+            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold shrink-0 border ${
+              isFall
+                ? "bg-red-500/20 border-red-500/30 text-red-400"
+                : isAck
+                  ? "bg-orange-500/20 border-orange-500/30 text-orange-400"
+                  : "bg-gradient-to-br from-cyan-500/20 to-blue-600/20 border-cyan-500/30 text-cyan-400"
+            }`}
+          >
+            {patient.initials}
+          </div>
+          {/* Name + Room */}
+          <div>
+            <h2 className="text-white font-semibold text-base leading-tight">
+              {patient.name}
+            </h2>
+            <span className="text-slate-500 text-xs font-mono">
+              Room {patient.room}
+            </span>
+          </div>
         </div>
 
-        {/* ── Top-Right: Confidence Gauge ── */}
-        <ConfidenceGauge status={status} />
-
-        {/* ── Bottom-Left: Vital Signs HUD ── */}
-        <VitalSigns status={status} />
-
-        {/* ── Bottom-Right: Live System Terminal ── */}
-        <SystemTerminal status={status} />
+        {/* Badges: Risk + Live */}
+        <div className="flex items-center gap-2">
+          {patient.isLive && (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/15 text-cyan-400 border border-cyan-500/25 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              LIVE
+            </span>
+          )}
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border tracking-wide ${riskStyles[patient.risk]}`}
+          >
+            {patient.risk}
+          </span>
+        </div>
       </div>
+
+      {/* ── Condition + Attending ── */}
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-amber-400/80 font-medium truncate">
+          {patient.condition}
+        </span>
+        <span className="text-slate-500 text-xs shrink-0 ml-2">
+          {patient.attending}
+        </span>
+      </div>
+
+      {/* ── Status Badge ── */}
+      <div
+        className={`flex items-center gap-2 px-3 py-2 rounded-lg ${sc.bg}`}
+      >
+        <span className={`w-2.5 h-2.5 rounded-full ${sc.dot}`} />
+        <span className={`text-xs font-bold tracking-widest uppercase ${sc.text}`}>
+          {sc.label}
+        </span>
+      </div>
+
+      {/* ── Vitals Row ── */}
+      <div className="grid grid-cols-4 gap-2">
+        <VitalMini label="HR" value={`${patient.vitals.hr}`} unit="bpm" status={status} />
+        <VitalMini label="SpO₂" value={`${patient.vitals.spo2}`} unit="%" status={status} />
+        <VitalMini label="BP" value={patient.vitals.bp} unit="mmHg" status={status} />
+        <VitalMini label="Temp" value={patient.vitals.temp} unit="°F" status={status} />
+      </div>
+
+      {/* ── Activity Indicator ── */}
+      <MiniWaveform status={status} />
+
+      {/* ── View Button ── */}
+      <Link
+        href={`/patient/${patient.room}`}
+        className={`
+          w-full py-3 rounded-xl text-center text-sm font-bold uppercase tracking-widest
+          transition-all duration-200 flex items-center justify-center gap-2
+          ${
+            isFall
+              ? "bg-red-600 hover:bg-red-500 text-white shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+              : isAck
+                ? "bg-orange-600/80 hover:bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.2)]"
+                : "bg-slate-800/80 hover:bg-slate-700/80 text-cyan-400 hover:text-cyan-300 border border-slate-700/50 hover:border-cyan-500/30"
+          }
+        `}
+      >
+        {isFall ? "Respond — View Twin" : "View Digital Twin"}
+        <span className="text-lg">→</span>
+      </Link>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   Mini Vital Display
+   ═══════════════════════════════════════════════════════ */
+
+function VitalMini({
+  label,
+  value,
+  unit,
+  status,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+  status: SystemStatus;
+}) {
+  const color =
+    status === "FALL" ? "text-red-300" : status === "ACKNOWLEDGED" ? "text-orange-300" : "text-white";
+
+  return (
+    <div className="bg-slate-800/40 rounded-lg px-2.5 py-2 text-center">
+      <div className={`text-sm font-bold tabular-nums ${color}`}>
+        {value}
+        <span className="text-[9px] font-normal text-slate-500 ml-0.5">{unit}</span>
+      </div>
+      <div className="text-[9px] text-slate-500 uppercase tracking-wider mt-0.5">
+        {label}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   Mini Waveform (ambient activity indicator per card)
+   ═══════════════════════════════════════════════════════ */
+
+function MiniWaveform({ status }: { status: SystemStatus }) {
+  const polyRef = useRef<SVGPolylineElement>(null);
+
+  const color =
+    status === "FALL" ? "#ef4444"
+      : status === "ACKNOWLEDGED" ? "#f97316"
+      : status === "RESTING" ? "#f0b840"
+      : "#00e5ff";
+
+  useEffect(() => {
+    const buffer = new Array(80).fill(0);
+    let phase = Math.random() * 10;
+    let lastTick = 0;
+    let handle: number;
+
+    const tick = (t: number) => {
+      if (t - lastTick > 60) {
+        buffer.shift();
+        const amplitude = status === "RESTING" ? 1 : status === "FALL" ? 4 : 2;
+        const speed = status === "RESTING" ? 0.15 : status === "FALL" ? 0.6 : 0.3;
+        buffer.push(
+          Math.sin(phase) * amplitude +
+          Math.sin(phase * 2.7) * (amplitude * 0.3)
+        );
+        phase += speed;
+        lastTick = t;
+        polyRef.current?.setAttribute(
+          "points",
+          buffer.map((y, x) => `${x * 2.5},${15 - y * 2}`).join(" ")
+        );
+      }
+      handle = requestAnimationFrame(tick);
+    };
+    handle = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(handle);
+  }, [status]);
+
+  return (
+    <div className="bg-slate-800/30 rounded-lg px-2 py-1">
+      <svg
+        viewBox="0 0 200 30"
+        className="w-full h-6"
+        preserveAspectRatio="none"
+      >
+        <polyline
+          ref={polyRef}
+          fill="none"
+          stroke={color}
+          strokeWidth="1.2"
+          strokeLinejoin="round"
+          opacity={0.6}
+        />
+      </svg>
     </div>
   );
 }
