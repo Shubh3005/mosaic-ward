@@ -4,15 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mosaic Ward is a HIPAA-compliant patient monitoring system with 3D digital twin visualization. It monitors multiple patient rooms simultaneously, detects falls in real-time using computer vision (MediaPipe), and triggers emergency alerts via Twilio. An AI nurse (LLM via OpenRouter) generates clinical incident reports.
+Mosaic Ward is a HIPAA-compliant patient monitoring system with 3D digital twin visualization. It monitors multiple patient rooms simultaneously, detects falls in real-time using computer vision (MediaPipe), and triggers emergency alerts via Twilio. An AI nurse (LLM via OpenRouter) automatically generates clinical incident reports on fall events.
 
 ## Tech Stack
 
 - **Frontend**: Next.js 16 (React 19), Three.js with React Three Fiber/Drei, Tailwind CSS 4, TypeScript
-- **Backend**: FastAPI (Python), Uvicorn ASGI server
+- **Backend**: FastAPI (Python) with async lifespan, Uvicorn ASGI server
 - **Vision**: MediaPipe pose detection, OpenCV for video capture
 - **Alerts**: Twilio for emergency calls
-- **AI**: OpenRouter API (Llama 3) for clinical incident reports
+- **AI**: OpenRouter API (auto-selects free models via `openrouter/free`) for clinical incident reports
 
 ## Development Commands
 
@@ -54,48 +54,88 @@ Run in separate terminals:
 │                       ▼                                          │
 │              WebSocket Broadcast                                 │
 │                       │                                          │
-│           ┌───────────┴───────────┐                              │
-│           ▼                       ▼                              │
-│    Twilio (on FALL)      OpenRouter (AI Report)                  │
+│           ┌───────────┼───────────┐                              │
+│           ▼           ▼           ▼                              │
+│     Twilio      OpenRouter    Frontend                           │
+│    (on FALL)   (AI Report)   (Dashboard)                         │
 └───────────────────────────────────────────────────────────────────┘
-                       │
-                       ▼
-              WardDashboard.tsx (2×2 grid of rooms)
 ```
 
 ### Patient Rooms
-- **301-A, 302-B, 303-C**: Simulated patients (backend generates skeleton data)
-- **304-A**: Live camera feed via `vision.py`
+- **301-A**: James R. - Simulated standing patient (routine monitoring cycle)
+- **302-B**: Elena K. - Simulated resting patient (continuous bed rest)
+- **303-C**: Robert M. - Simulated patient who randomly falls (demo triggers available)
+- **304-A**: Shubham G. - Live camera feed via `vision.py`
 
 ### Frontend Structure (`frontend/src/app/`)
-- `page.tsx` - Entry point, dynamically imports WardDashboard
-- `components/WardDashboard.tsx` - Main 2×2 grid dashboard with all patient cards
-- `components/DigitalTwin.tsx` - Single-room 3D skeleton visualization (used in detail views)
+- `page.tsx` - Entry point, dynamically imports WardDashboard (SSR disabled)
+- `components/WardDashboard.tsx` - Main 2x2 grid dashboard with all patient cards, vitals, AI loading states
+- `components/Dashboard.tsx` - Single-patient detail view with terminal-style logs
+- `components/DigitalTwin.tsx` - Full-featured single-room 3D visualization with SafeZone, fog, floor grid
+- `patient/[roomId]/page.tsx` - Dynamic route for individual patient detail pages
+- `family/page.tsx` - Family portal with wellness scores, metrics, and SMS summaries
 
 ### Backend Endpoints (`server.py`)
 - `GET /api/status` - All room states
+- `GET /api/status/{room_id}` - Single room state
 - `POST /api/acknowledge/{room_id}` - Nurse acknowledges fall alert
-- `POST /api/director/fall/{room_id}` - Demo mode: force a fall in room 303-C
-- `POST /api/analyze_fall` - Trigger LLM to generate clinical incident report
-- `WebSocket /ws/skeleton` - Bidirectional skeleton data stream (broadcasts to all clients)
+- `POST /api/reset/{room_id}` - Reset room to NORMAL and resolve active incident
+- `POST /api/director/fall/{room_id}` - Demo mode: force fall in room 303-C
+- `POST /api/analyze_fall` - Manually trigger AI incident report
+- `GET /api/incidents` - Paginated incident list with stats (`?limit=&offset=`)
+- `GET /api/incidents/{id}` - Single incident details
+- `POST /api/incidents/{id}/resolve` - Mark incident resolved
+- `GET /api/family/rooms` - Available rooms for family portal
+- `GET /api/family/wellness/{room_id}` - Wellness score and metrics
+- `POST /api/family/send-summary/{room_id}` - Send SMS wellness update
+- `WebSocket /ws/skeleton` - Bidirectional skeleton stream (broadcasts to all clients)
+
+### WebSocket Message Types
+- `skeleton_update` - Pose data with landmarks, status, room_id, tracked flag
+- `status_update` - Status change broadcast (e.g., after acknowledge or reset)
+- `incident_report` - AI-generated clinical report text
+
+### Database (`incidents.db` - SQLite, auto-created on startup)
+- **incidents** - Fall events with status (ACTIVE/ACKNOWLEDGED/RESOLVED), AI reports, timestamps
+- **wellness_stats** - Daily per-room sleep hours, rest periods, activity events, scores
+- **family_subscribers** - Phone numbers subscribed to room updates
 
 ### Status States
-- `NORMAL` - Patient upright, no issues (cyan)
-- `RESTING` - Patient lying in safe zone/bed (amber)
-- `FALL` - Patient on floor outside safe zone (red, pulsing)
-- `ACKNOWLEDGED` - Fall acknowledged by staff, help en route (orange)
+| Status | Color | Meaning |
+|--------|-------|---------|
+| `NORMAL` | Cyan | Patient upright, no issues |
+| `RESTING` | Amber | Patient lying in safe zone (bed) |
+| `FALL` | Red (pulsing) | Patient on floor outside safe zone |
+| `ACKNOWLEDGED` | Orange | Fall acknowledged, staff en route |
 
 ### Fall Detection Logic (`vision.py`)
-1. Checks if patient is horizontal (nose Y ≈ hip Y, difference < 0.2)
-2. If horizontal, checks if hips are within "bed zone" (center 50% of frame: x ∈ [0.25, 0.75])
-3. In bed zone → RESTING; outside → FALL
+1. Checks if patient is horizontal: `abs(nose_y - hip_y) < 0.2`
+2. If horizontal, checks hip X position against bed zone: `0.25 < hip_x < 0.75`
+3. In bed zone → `RESTING`; outside → `FALL`
+
+### Simulation Engine
+- Runs at 10 FPS via `asyncio` background task
+- Room 303-C has random fall chance after 500 ticks (or via director API)
+- Falls auto-recover after 20 seconds unless acknowledged
+- AI incident report automatically generated on simulated falls
+
+### AI Report Generation
+- Uses OpenRouter with model fallback chain: `openrouter/free` (meta-router) → Gemma 3 27B → Llama 3.3 70B → Llama 4 Maverick → Mistral Small 3.1 → Qwen QWQ 32B → Nemotron Nano 8B
+- Falls back to smart mock generator if all models fail or no API key
+- Runs in `asyncio.to_thread()` to avoid blocking
+- Reports broadcast via WebSocket `incident_report` message type
+- Free models rotate frequently on OpenRouter; 429 rate limits are common (1s retry delay between models)
 
 ## Key Conventions
 
-- **HIPAA compliance**: Only pose landmarks (x, y, z coordinates) transmitted, never video frames
-- **Multi-room WebSocket**: Single connection routes data by `room_id` field
-- **Simulation engine**: Runs on server startup, animates rooms 301-303 at 10 FPS
-- **Twilio cooldown**: 30-second cooldown between emergency calls (only triggers for live room 304-A)
+- **HIPAA compliance**: Only pose landmarks (x, y, z, visibility) transmitted, never video
+- **Async-first**: AI reports use `asyncio.to_thread()` to avoid blocking
+- **Single WebSocket**: All rooms share one connection, routed by `room_id` field
+- **Twilio cooldown**: 30-second cooldown, only triggers for live room 304-A
+- **Graceful degradation**: AI/Twilio features disabled if env vars missing
+- **No SSR for 3D**: Three.js components use `next/dynamic` with `ssr: false`
+- **CORS**: Locked to `localhost:3000` and `127.0.0.1:3000`
+- **No test framework**: No Jest/pytest configured; testing is manual
 
 ## Environment Variables (`.env`)
 ```

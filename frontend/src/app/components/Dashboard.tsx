@@ -39,7 +39,7 @@ export const WARD_PATIENTS: Record<string, PatientData> = {
   "301-A": { name: "James R.", initials: "JR", ward: "Cardiology — Rm 301", condition: "Cardiac Monitoring", risk: "MODERATE", riskColor: "amber", attending: "Dr. Chen", admitted: "Jan 28, 2026" },
   "302-B": { name: "Elena K.", initials: "EK", ward: "Orthopedic — Rm 302", condition: "Post-op Knee Replacement", risk: "LOW", riskColor: "emerald", attending: "Dr. Patel", admitted: "Feb 1, 2026" },
   "303-C": { name: "Robert M.", initials: "RM", ward: "General — Rm 303", condition: "Fall Recovery", risk: "HIGH", riskColor: "red", attending: "Dr. Kim", admitted: "Jan 30, 2026" },
-  "304-A": { name: "Martha V.", initials: "MV", ward: "Orthopedic — Rm 304", condition: "Post-op Hip Replacement", risk: "HIGH", riskColor: "red", attending: "Dr. Ramirez", admitted: "Feb 2, 2026" },
+  "304-A": { name: "Shubham G.", initials: "SG", ward: "Orthopedic — Rm 304", condition: "Live Feed (You)", risk: "HIGH", riskColor: "red", attending: "Dr. Ramirez", admitted: "Feb 2, 2026" },
 };
 
 const MOCK_VITALS: Record<string, { hr: number; spo2: number; bp: string; temp: string }> = {
