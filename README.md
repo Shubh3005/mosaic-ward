@@ -1,71 +1,27 @@
-## Project Overview
+# Mosaic-Ward 🏥
+**Privacy-First Autonomous Patient Monitoring System**
 
-Mosaic Ward is a HIPAA-compliant patient monitoring system with a 3D digital twin visualization. It detects patient falls in real-time using computer vision (MediaPipe) and triggers emergency alerts via Twilio.
+> 🏆 TartanHacks 2026 Submission
 
-## Tech Stack
+![Dashboard](https://raw.githubusercontent.com/Shubh3005/mosaic-ward/main/screenshots/dashboard.png) 
 
-- **Frontend**: Next.js 16 (React 19), Three.js with React Three Fiber, Tailwind CSS 4, TypeScript
-- **Backend**: FastAPI (Python), Uvicorn ASGI server
-- **Vision**: MediaPipe pose detection, OpenCV for video capture
-- **Alerts**: Twilio for emergency calls/SMS
+## 💡 The Problem
+Hospital falls cost the US healthcare system **$50 billion annually**. Cameras could prevent them, but they violate **HIPAA privacy regulations**. Hospitals are flying blind.
 
-## Development Commands
+## 🛡️ The Solution
+Mosaic-Ward uses **Computer Vision** to track **skeletal landmarks** (not video), creating a privacy-safe "Digital Twin."
+- **Privacy-First:** No video is ever stored.
+- **AI-Powered:** Generative AI analyzes fall physics to write clinical reports.
+- **Real-Time:** Twilio voice alerts in <2 seconds.
 
-### Frontend (run from `frontend/` directory)
-```bash
-npm run dev      # Start dev server on localhost:3000
-npm run build    # Production build
-npm run start    # Start production server
-npm run lint     # Run ESLint
-```
+## ⚙️ Tech Stack
+- **Vision:** Python, MediaPipe
+- **Backend:** FastAPI, WebSockets
+- **Frontend:** Next.js, Three.js
+- **AI:** Google Gemini (via OpenRouter)
+- **Notifications:** Twilio Voice & SMS
 
-### Backend (run from root directory)
-```bash
-source venv/bin/activate   # Activate Python venv
-python server.py           # Start FastAPI on localhost:8000
-python vision.py           # Start webcam pose detection client
-```
-
-### Full Stack Development
-Run these in separate terminals:
-1. `cd frontend && npm run dev`
+## 🚀 How to Run
+1. `pip install -r requirements.txt`
 2. `python server.py`
-3. `python vision.py`
-4. Open `http://localhost:3000`
-
-## Architecture
-
-### Data Flow
-```
-Webcam → vision.py (MediaPipe) → WebSocket → server.py (FastAPI) → WebSocket → DigitalTwin.tsx (Three.js)
-                                                    ↓
-                                            Twilio (on fall)
-```
-
-### Frontend Structure (`frontend/src/app/`)
-- `page.tsx` - Main dashboard with bento grid layout, real-time status polling
-- `components/DigitalTwin.tsx` - Three.js 3D skeleton visualization with WebSocket connection to `ws://localhost:8000/ws/skeleton`
-- Uses dynamic import (`next/dynamic`) to disable SSR for Three.js component
-
-### Backend Endpoints (`server.py`)
-- `GET /api/status` - Current system state (NORMAL/FALL)
-- `POST /api/reset` - Reset alarm to NORMAL
-- `WebSocket /ws/skeleton` - Bidirectional skeleton data stream
-
-### Fall Detection Logic (`vision.py`)
-Compares nose Y position to mid-hip Y position. If difference < 0.2, triggers FALL status which initiates Twilio emergency call (30s cooldown).
-
-## Key Conventions
-
-- **HIPAA compliance**: Only pose landmarks (x, y, z coordinates) are transmitted, never video frames
-- **WebSocket resilience**: Frontend falls back to HTTP polling if WebSocket disconnects
-- **3D coordinate system**: MediaPipe 33 landmarks mapped to Three.js spheres with bone connections
-- **Alert colors**: Cyan (#00e5ff) for normal, red (#ef4444) for fall detection
-
-## Environment Variables (`.env`)
-```
-TWILIO_ACCOUNT_SID=...
-TWILIO_AUTH_TOKEN=...
-TWILIO_FROM_NUMBER=...
-EMERGENCY_TO_NUMBER=...
-```
+3. `npm run dev`

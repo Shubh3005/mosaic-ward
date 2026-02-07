@@ -4,6 +4,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { useRef, useState, useEffect, useMemo } from "react";
 import { OrbitControls, Grid, Line } from "@react-three/drei";
 import * as THREE from "three";
+import { WS } from "@/lib/api";
 
 /* ═══════════════════════════════════════════════════════
    Types
@@ -93,10 +94,10 @@ function Skeleton({
   status: SystemStatus;
 }) {
   const colorMap = {
-    FALL:         { joint: "#ff2244", bone: "#ff4466", emissive: "#ff0000", intensity: 2.5 },
+    FALL: { joint: "#ff2244", bone: "#ff4466", emissive: "#ff0000", intensity: 2.5 },
     ACKNOWLEDGED: { joint: "#f97316", bone: "#ea580c", emissive: "#7c2d12", intensity: 1.0 },
-    RESTING:      { joint: "#f0b840", bone: "#d4a030", emissive: "#665510", intensity: 0.6 },
-    NORMAL:       { joint: "#00e5ff", bone: "#00d4ff", emissive: "#005577", intensity: 0.8 },
+    RESTING: { joint: "#f0b840", bone: "#d4a030", emissive: "#665510", intensity: 0.6 },
+    NORMAL: { joint: "#00e5ff", bone: "#00d4ff", emissive: "#005577", intensity: 0.8 },
   };
   const c = colorMap[status] ?? colorMap.NORMAL;
   const jointColor = c.joint;
@@ -418,10 +419,10 @@ function SceneFog({ status }: { status: SystemStatus }) {
 
 function FloorGrid({ status }: { status: SystemStatus }) {
   const gridColors: Record<string, { cell: string; section: string }> = {
-    FALL:         { cell: "#3a0a0a", section: "#6a1a1a" },
+    FALL: { cell: "#3a0a0a", section: "#6a1a1a" },
     ACKNOWLEDGED: { cell: "#2a1a0a", section: "#5a3a1a" },
-    RESTING:      { cell: "#1a2a0a", section: "#3a5a1a" },
-    NORMAL:       { cell: "#0d3b4f", section: "#1a6b7a" },
+    RESTING: { cell: "#1a2a0a", section: "#3a5a1a" },
+    NORMAL: { cell: "#0d3b4f", section: "#1a6b7a" },
   };
   const g = gridColors[status] ?? gridColors.NORMAL;
   const cellColor = g.cell;
@@ -502,7 +503,7 @@ export default function DigitalTwin({
 
     function connect() {
       if (!alive) return;
-      ws = new WebSocket("ws://localhost:8000/ws/skeleton");
+      ws = new WebSocket(WS.skeleton);
 
       ws.onopen = () => {
         console.log("[MOSAIC] WebSocket connected to skeleton stream");
@@ -559,11 +560,10 @@ export default function DigitalTwin({
       {/* Connection status badge */}
       <div className="absolute top-3 left-3 z-10 flex items-center gap-2 px-2.5 py-1 rounded-full bg-black/50 backdrop-blur-sm border border-white/5">
         <span
-          className={`inline-block w-2 h-2 rounded-full ${
-            connected
+          className={`inline-block w-2 h-2 rounded-full ${connected
               ? "bg-emerald-400 shadow-[0_0_6px_#34d399]"
               : "bg-red-500 animate-pulse"
-          }`}
+            }`}
         />
         <span className="text-[10px] font-mono tracking-wider text-slate-300 uppercase">
           {connected

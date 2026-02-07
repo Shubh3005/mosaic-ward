@@ -3,11 +3,12 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Line, Grid } from '@react-three/drei';
-import { 
-  ArrowLeft, Heart, Wind, Brain, History, Clock, 
+import {
+  ArrowLeft, Heart, Wind, Brain, History, Clock,
   AlertTriangle, CheckCircle2, FileText, ChevronDown, ChevronUp,
   LayoutGrid, List, RefreshCw, Activity
 } from 'lucide-react';
+import { API, WS } from '@/lib/api';
 
 // --- TYPES ---
 type Landmark = { x: number; y: number; z: number; visibility: number };
@@ -15,7 +16,7 @@ type PatientData = {
   room_id: string;
   status: "NORMAL" | "RESTING" | "FALL" | "ACKNOWLEDGED";
   landmarks: Landmark[];
-  name?: string; 
+  name?: string;
 };
 
 type LogEntry = {
@@ -58,8 +59,8 @@ const Skeleton = ({ landmarks, color, scale = 2 }: { landmarks: Landmark[]; colo
   // Center the skeleton: (0.5, 0.5) moves to (0,0)
   // Adjusted Y-offset (-0.1) to center it better vertically in the box
   const getVec = (i: number) => [
-    (landmarks[i].x - 0.5) * -scale, 
-    -(landmarks[i].y - 0.5) * scale - 0.1, 
+    (landmarks[i].x - 0.5) * -scale,
+    -(landmarks[i].y - 0.5) * scale - 0.1,
     -landmarks[i].z * scale
   ];
 
@@ -114,7 +115,7 @@ const VitalsMonitor = ({ status }: { status: string }) => {
         </div>
         <div className="text-4xl font-mono font-black text-white">{hr} <span className="text-sm text-slate-500">BPM</span></div>
         <div className="absolute bottom-0 left-0 right-0 h-1 bg-rose-500/20">
-            <div className="h-full bg-rose-500 animate-pulse" style={{width: `${(hr/140)*100}%`}}></div>
+          <div className="h-full bg-rose-500 animate-pulse" style={{ width: `${(hr / 140) * 100}%` }}></div>
         </div>
       </div>
       <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 relative overflow-hidden">
@@ -122,9 +123,9 @@ const VitalsMonitor = ({ status }: { status: string }) => {
           <Wind size={20} /> <span className="text-xs font-bold">SpO2</span>
         </div>
         <div className="text-4xl font-mono font-black text-white">{spo2}%</div>
-         <div className="absolute bottom-0 left-0 right-0 h-1 bg-cyan-500/20">
-           <div className="h-full bg-cyan-500" style={{width: `${spo2}%`}}></div>
-         </div>
+        <div className="absolute bottom-0 left-0 right-0 h-1 bg-cyan-500/20">
+          <div className="h-full bg-cyan-500" style={{ width: `${spo2}%` }}></div>
+        </div>
       </div>
     </div>
   );
@@ -164,10 +165,10 @@ const IncidentCard = ({ incident, onResolve }: { incident: Incident; onResolve: 
     return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
   const getStatusBadge = () => {
-    switch(incident.status) {
-      case "ACTIVE": return <span className="px-2 py-1 bg-red-600 text-white text-xs font-bold rounded animate-pulse flex items-center gap-1"><AlertTriangle size={12}/> ACTIVE</span>;
-      case "ACKNOWLEDGED": return <span className="px-2 py-1 bg-orange-500 text-white text-xs font-bold rounded flex items-center gap-1"><Clock size={12}/> ACKNOWLEDGED</span>;
-      case "RESOLVED": return <span className="px-2 py-1 bg-emerald-600 text-white text-xs font-bold rounded flex items-center gap-1"><CheckCircle2 size={12}/> RESOLVED</span>;
+    switch (incident.status) {
+      case "ACTIVE": return <span className="px-2 py-1 bg-red-600 text-white text-xs font-bold rounded animate-pulse flex items-center gap-1"><AlertTriangle size={12} /> ACTIVE</span>;
+      case "ACKNOWLEDGED": return <span className="px-2 py-1 bg-orange-500 text-white text-xs font-bold rounded flex items-center gap-1"><Clock size={12} /> ACKNOWLEDGED</span>;
+      case "RESOLVED": return <span className="px-2 py-1 bg-emerald-600 text-white text-xs font-bold rounded flex items-center gap-1"><CheckCircle2 size={12} /> RESOLVED</span>;
     }
   };
 
@@ -195,7 +196,7 @@ const IncidentCard = ({ incident, onResolve }: { incident: Incident; onResolve: 
       </div>
       {incident.ai_report ? (
         <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-2 text-purple-400 text-xs font-bold hover:text-purple-300 transition">
-          <FileText size={14} /> AI Clinical Report {expanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+          <FileText size={14} /> AI Clinical Report {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
       ) : incident.status !== "RESOLVED" ? (
         <div className="flex items-center gap-2 text-purple-400/60 text-xs font-bold">
@@ -226,7 +227,7 @@ const IncidentHistory = ({ onBack }: { onBack: () => void }) => {
   const fetchIncidents = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/api/incidents');
+      const res = await fetch(API.incidents);
       const data = await res.json();
       setIncidents(data.incidents || []);
       setStats(data.stats || { total: 0, active: 0, resolved: 0 });
@@ -237,7 +238,7 @@ const IncidentHistory = ({ onBack }: { onBack: () => void }) => {
   useEffect(() => { fetchIncidents(); const interval = setInterval(fetchIncidents, 5000); return () => clearInterval(interval); }, [fetchIncidents]);
 
   const handleResolve = async (id: number) => {
-    await fetch(`http://localhost:8000/api/incidents/${id}/resolve`, { method: 'POST' });
+    await fetch(API.incidentResolve(id), { method: 'POST' });
     fetchIncidents();
   };
 
@@ -268,9 +269,9 @@ const IncidentHistory = ({ onBack }: { onBack: () => void }) => {
         ))}
       </div>
       <div className="flex-1 overflow-y-auto pl-4">
-        {loading && incidents.length === 0 ? <div className="flex items-center justify-center h-full text-slate-500">Loading...</div> : 
-         filteredIncidents.length === 0 ? <div className="flex flex-col items-center justify-center h-full text-slate-500"><CheckCircle2 size={48} className="mb-4 opacity-50"/><div>No incidents found</div></div> :
-         <div className="relative"><div className="absolute left-0 top-0 bottom-0 w-px bg-slate-700"></div>{filteredIncidents.map(inc => <IncidentCard key={inc.id} incident={inc} onResolve={handleResolve}/>)}</div>}
+        {loading && incidents.length === 0 ? <div className="flex items-center justify-center h-full text-slate-500">Loading...</div> :
+          filteredIncidents.length === 0 ? <div className="flex flex-col items-center justify-center h-full text-slate-500"><CheckCircle2 size={48} className="mb-4 opacity-50" /><div>No incidents found</div></div> :
+            <div className="relative"><div className="absolute left-0 top-0 bottom-0 w-px bg-slate-700"></div>{filteredIncidents.map(inc => <IncidentCard key={inc.id} incident={inc} onResolve={handleResolve} />)}</div>}
       </div>
     </div>
   );
@@ -289,7 +290,7 @@ export default function WardDashboard() {
   }, []);
 
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8000/ws/skeleton');
+    const ws = new WebSocket(WS.skeleton);
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'incident_report') {
@@ -311,12 +312,12 @@ export default function WardDashboard() {
   }, [addLog]);
 
   const handleAcknowledge = async (id: string) => {
-    await fetch(`http://localhost:8000/api/acknowledge/${id}`, { method: 'POST' });
+    await fetch(API.acknowledge(id), { method: 'POST' });
     addLog(`Nurse acknowledged alert for Room ${id}`, 'info');
-    fetch(`http://localhost:8000/api/analyze_fall`, { 
-        method: 'POST', 
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ room_id: id }) 
+    fetch(API.analyzeFall, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ room_id: id })
     });
   };
 
@@ -352,7 +353,7 @@ export default function WardDashboard() {
             <Canvas camera={{ position: [0, 0, 3], fov: 45 }}>
               <ambientLight intensity={0.5} /><pointLight position={[10, 10, 10]} />
               <Grid position={[0, -1, 0]} infiniteGrid fadeDistance={20} sectionColor="#1e293b" cellColor="#0f172a" />
-              {data?.landmarks && <Skeleton landmarks={data.landmarks} color={status === "FALL" ? "#ef4444" : status === "RESTING" ? "#10b981" : "#22d3ee"} scale={2.5}/>}
+              {data?.landmarks && <Skeleton landmarks={data.landmarks} color={status === "FALL" ? "#ef4444" : status === "RESTING" ? "#10b981" : "#22d3ee"} scale={2.5} />}
             </Canvas>
             <div className="absolute top-6 left-6">
               <div className={`text-4xl font-black tracking-tighter ${status === "FALL" ? "text-red-500 animate-pulse" : status === "ACKNOWLEDGED" ? "text-orange-400" : status === "RESTING" ? "text-emerald-400" : "text-cyan-400"}`}>{status.replace("_", " ")}</div>
@@ -416,14 +417,14 @@ export default function WardDashboard() {
           const info = ROOM_INFO[id];
           const isCritical = d?.status === "FALL";
           return (
-            <div 
-              key={id} 
-              onClick={() => setSelectedId(id)} 
+            <div
+              key={id}
+              onClick={() => setSelectedId(id)}
               className={`relative border-2 transition-all duration-500 rounded-xl cursor-pointer overflow-hidden group
-                ${isCritical 
-                  ? 'border-red-500 bg-red-950/20 shadow-[0_0_20px_rgba(239,68,68,0.3)]' 
-                  : d?.status === "RESTING" ? 'border-emerald-800 bg-emerald-950/20' 
-                  : 'border-slate-800 bg-slate-900/40 hover:border-cyan-500'}`}
+                ${isCritical
+                  ? 'border-red-500 bg-red-950/20 shadow-[0_0_20px_rgba(239,68,68,0.3)]'
+                  : d?.status === "RESTING" ? 'border-emerald-800 bg-emerald-950/20'
+                    : 'border-slate-800 bg-slate-900/40 hover:border-cyan-500'}`}
             >
               <div className="absolute top-4 left-4 z-10 pointer-events-none">
                 <h3 className="font-bold text-lg">{id}</h3>
@@ -435,11 +436,11 @@ export default function WardDashboard() {
               <div className="w-full h-full opacity-80 group-hover:opacity-100 transition-opacity">
                 {d?.landmarks ? (
                   <Canvas camera={{ position: [0, 0, 2], fov: 60 }}>
-                    <Skeleton landmarks={d.landmarks} color={isCritical ? "#ef4444" : "#22d3ee"} scale={2.5}/>
+                    <Skeleton landmarks={d.landmarks} color={isCritical ? "#ef4444" : "#22d3ee"} scale={2.5} />
                   </Canvas>
                 ) : (
                   <div className="flex items-center justify-center h-full text-slate-600 animate-pulse">
-                     <Activity size={32} />
+                    <Activity size={32} />
                   </div>
                 )}
               </div>
@@ -450,8 +451,8 @@ export default function WardDashboard() {
 
       {/* GOD MODE DIRECTOR PANEL */}
       <div className="fixed bottom-6 right-6 flex gap-2 opacity-10 hover:opacity-100 transition-opacity z-50">
-        <button onClick={() => fetch('http://localhost:8000/api/director/fall/303-C', { method: 'POST' })} className="bg-red-900/40 border border-red-500/50 text-[10px] px-3 py-1 rounded text-red-400 font-mono hover:bg-red-900">[DEMO: TRIGGER FALL 303]</button>
-        <button onClick={() => fetch('http://localhost:8000/api/reset/303-C', {method:'POST'})} className="bg-slate-800 border border-slate-700 text-[10px] px-3 py-1 rounded text-slate-400 font-mono hover:bg-slate-700">[DEMO: RESET]</button>
+        <button onClick={() => fetch(API.directorFall('303-C'), { method: 'POST' })} className="bg-red-900/40 border border-red-500/50 text-[10px] px-3 py-1 rounded text-red-400 font-mono hover:bg-red-900">[DEMO: TRIGGER FALL 303]</button>
+        <button onClick={() => fetch(API.resetRoom('303-C'), { method: 'POST' })} className="bg-slate-800 border border-slate-700 text-[10px] px-3 py-1 rounded text-slate-400 font-mono hover:bg-slate-700">[DEMO: RESET]</button>
       </div>
     </div>
   );

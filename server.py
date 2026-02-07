@@ -657,7 +657,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if room_id not in active_incidents:
                         iid = create_incident(room_id)
                         asyncio.create_task(generate_incident_report(room_id, iid))
-                    if room_id == "304-A": trigger_emergency_call(room_id)
+                    trigger_emergency_call(room_id)  # All rooms trigger calls
             elif raw in ["NORMAL","RESTING"]:
                 if room_states.get(room_id,{}).get("acknowledged"): room_states[room_id]["acknowledged"] = False
                 if room_id in active_incidents: resolve_incident(active_incidents[room_id])

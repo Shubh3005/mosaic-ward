@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import type { SkeletonFrame, SystemStatus } from "./DigitalTwin";
+import { API } from "@/lib/api";
 
 /* ═══════════════════════════════════════════════════════
    Dynamic import — Three.js must NOT be server-rendered
@@ -178,25 +179,23 @@ function PatientProfile({ status, patient, roomId }: { status: SystemStatus; pat
       </div>
 
       <div
-        className={`mt-auto pt-3 border-t border-slate-700/40 text-xs font-mono flex items-center gap-2 ${
-          status === "FALL" ? "text-red-400"
+        className={`mt-auto pt-3 border-t border-slate-700/40 text-xs font-mono flex items-center gap-2 ${status === "FALL" ? "text-red-400"
             : status === "ACKNOWLEDGED" ? "text-orange-400"
-            : status === "RESTING" ? "text-amber-400"
-            : "text-emerald-400"
-        }`}
+              : status === "RESTING" ? "text-amber-400"
+                : "text-emerald-400"
+          }`}
       >
         <span
-          className={`inline-block w-1.5 h-1.5 rounded-full ${
-            status === "FALL" ? "bg-red-400 animate-pulse"
+          className={`inline-block w-1.5 h-1.5 rounded-full ${status === "FALL" ? "bg-red-400 animate-pulse"
               : status === "ACKNOWLEDGED" ? "bg-orange-400"
-              : status === "RESTING" ? "bg-amber-400"
-              : "bg-emerald-400"
-          }`}
+                : status === "RESTING" ? "bg-amber-400"
+                  : "bg-emerald-400"
+            }`}
         />
         {status === "FALL" ? "ALERT ACTIVE"
           : status === "ACKNOWLEDGED" ? "STAFF RESPONDING"
-          : status === "RESTING" ? "PATIENT RESTING"
-          : "MONITORING ACTIVE"}
+            : status === "RESTING" ? "PATIENT RESTING"
+              : "MONITORING ACTIVE"}
       </div>
     </GlassPanel>
   );
@@ -226,10 +225,10 @@ function Row({
 function VitalSigns({ status, vitals }: { status: SystemStatus; vitals: { hr: number; spo2: number; bp: string; temp: string } }) {
   const waveColor =
     status === "FALL" ? "#ef4444" : status === "ACKNOWLEDGED" ? "#f97316"
-    : status === "RESTING" ? "#f0b840" : "#00e5ff";
+      : status === "RESTING" ? "#f0b840" : "#00e5ff";
   const spo2Color =
     status === "FALL" ? "#ef4444" : status === "ACKNOWLEDGED" ? "#ea580c"
-    : status === "RESTING" ? "#d4a030" : "#22d3ee";
+      : status === "RESTING" ? "#d4a030" : "#22d3ee";
 
   return (
     <GlassPanel className="flex flex-col gap-3">
@@ -372,7 +371,7 @@ function ConfidenceGauge({ status }: { status: SystemStatus }) {
   const offset = circumference - (confidence / 100) * circumference;
   const accentColor =
     status === "FALL" ? "#ef4444" : status === "ACKNOWLEDGED" ? "#f97316"
-    : status === "RESTING" ? "#f0b840" : "#00e5ff";
+      : status === "RESTING" ? "#f0b840" : "#00e5ff";
 
   return (
     <GlassPanel className="flex flex-col items-center justify-center gap-4">
@@ -408,16 +407,15 @@ function ConfidenceGauge({ status }: { status: SystemStatus }) {
         </div>
       </div>
 
-      <div className={`text-xs font-mono text-center ${
-        status === "FALL" ? "text-red-400 animate-pulse"
+      <div className={`text-xs font-mono text-center ${status === "FALL" ? "text-red-400 animate-pulse"
           : status === "ACKNOWLEDGED" ? "text-orange-400/70"
-          : status === "RESTING" ? "text-amber-400/70"
-          : "text-cyan-400/60"
-      }`}>
+            : status === "RESTING" ? "text-amber-400/70"
+              : "text-cyan-400/60"
+        }`}>
         {status === "FALL" ? "⚠ FALL DETECTED — ALERTING STAFF"
           : status === "ACKNOWLEDGED" ? "Staff responding — monitoring"
-          : status === "RESTING" ? "Patient safely in bed"
-          : "All systems nominal"}
+            : status === "RESTING" ? "Patient safely in bed"
+              : "All systems nominal"}
       </div>
     </GlassPanel>
   );
@@ -437,8 +435,8 @@ function SystemTerminal({ status }: { status: SystemStatus }) {
       const pool =
         status === "FALL" ? FALL_LOGS
           : status === "ACKNOWLEDGED" ? ACKNOWLEDGED_LOGS
-          : status === "RESTING" ? RESTING_LOGS
-          : NORMAL_LOGS;
+            : status === "RESTING" ? RESTING_LOGS
+              : NORMAL_LOGS;
       const msg = pool[Math.floor(Math.random() * pool.length)];
       setLogs((prev) => [...prev.slice(-60), `${now} ${msg}`]);
     };
@@ -475,9 +473,9 @@ function SystemTerminal({ status }: { status: SystemStatus }) {
             className={
               log.includes("ALERT") || log.includes("FALL") ? "text-red-400"
                 : log.includes("[AI]") ? "text-cyan-400"
-                : log.includes("[WEBSOCKET]") ? "text-emerald-400"
-                : log.includes("[HIPAA]") ? "text-violet-400"
-                : "text-slate-500"
+                  : log.includes("[WEBSOCKET]") ? "text-emerald-400"
+                    : log.includes("[HIPAA]") ? "text-violet-400"
+                      : "text-slate-500"
             }
           >
             {log}
@@ -577,7 +575,7 @@ export default function Dashboard({ roomId }: DashboardProps) {
   useEffect(() => {
     const poll = setInterval(async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/status/${roomId}`);
+        const res = await fetch(API.statusRoom(roomId));
         const data = await res.json();
         if (["FALL", "NORMAL", "RESTING", "ACKNOWLEDGED"].includes(data.status)) {
           setStatus(data.status);
@@ -591,14 +589,14 @@ export default function Dashboard({ roomId }: DashboardProps) {
 
   const resetSystem = async () => {
     try {
-      await fetch(`http://localhost:8000/api/reset/${roomId}`, { method: "POST" });
+      await fetch(API.resetRoom(roomId), { method: "POST" });
       setStatus("NORMAL");
     } catch { /* offline */ }
   };
 
   const acknowledgeAlert = async () => {
     try {
-      await fetch(`http://localhost:8000/api/acknowledge/${roomId}`, { method: "POST" });
+      await fetch(API.acknowledge(roomId), { method: "POST" });
       setStatus("ACKNOWLEDGED");
     } catch { /* offline */ }
   };
@@ -633,28 +631,26 @@ export default function Dashboard({ roomId }: DashboardProps) {
 
         <div className="flex items-center gap-4">
           <div
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-mono ${
-              status === "FALL"
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-mono ${status === "FALL"
                 ? "bg-red-500/15 text-red-400 border border-red-500/30 animate-pulse"
                 : status === "ACKNOWLEDGED"
                   ? "bg-orange-500/15 text-orange-400 border border-orange-500/30"
                   : status === "RESTING"
                     ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                     : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-            }`}
+              }`}
           >
             <span
-              className={`w-2 h-2 rounded-full ${
-                status === "FALL" ? "bg-red-500"
+              className={`w-2 h-2 rounded-full ${status === "FALL" ? "bg-red-500"
                   : status === "ACKNOWLEDGED" ? "bg-orange-400"
-                  : status === "RESTING" ? "bg-amber-400"
-                  : "bg-emerald-400"
-              }`}
+                    : status === "RESTING" ? "bg-amber-400"
+                      : "bg-emerald-400"
+                }`}
             />
             {status === "FALL" ? "FALL DETECTED"
               : status === "ACKNOWLEDGED" ? "ACKNOWLEDGED"
-              : status === "RESTING" ? "PATIENT RESTING"
-              : "ALL CLEAR"}
+                : status === "RESTING" ? "PATIENT RESTING"
+                  : "ALL CLEAR"}
           </div>
         </div>
       </header>

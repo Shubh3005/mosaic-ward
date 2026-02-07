@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { 
-    Heart, Moon, Activity, Phone, Shield, 
-    CheckCircle, Bell, ChevronDown, Send, 
+import {
+    Heart, Moon, Activity, Phone, Shield,
+    CheckCircle, Bell, ChevronDown, Send,
     Sparkles, User
 } from 'lucide-react';
+import { API } from '@/lib/api';
 
 // --- TYPES ---
 type WellnessData = {
@@ -37,7 +38,7 @@ export default function FamilyPortal() {
 
     // Fetch room list
     useEffect(() => {
-        fetch('http://localhost:8000/api/family/rooms')
+        fetch(API.familyRooms)
             .then(res => res.json())
             .then(data => setRooms(data.rooms || []))
             .catch(err => console.error(err));
@@ -48,7 +49,7 @@ export default function FamilyPortal() {
         if (!selectedRoom) return;
         setLoading(true);
         try {
-            const res = await fetch(`http://localhost:8000/api/family/wellness/${selectedRoom}`);
+            const res = await fetch(API.familyWellness(selectedRoom));
             const data = await res.json();
             setWellness(data);
         } catch (err) { console.error(err); }
@@ -65,7 +66,7 @@ export default function FamilyPortal() {
     const handleInstantUpdate = async () => {
         setSending(true);
         try {
-            await fetch(`http://localhost:8000/api/family/send-summary/${selectedRoom}`, { method: 'POST' });
+            await fetch(API.familySendSummary(selectedRoom), { method: 'POST' });
             setSentSuccess(true);
             setTimeout(() => setSentSuccess(false), 5000); // Reset after 5s
         } catch (e) { console.error(e); }
@@ -81,18 +82,18 @@ export default function FamilyPortal() {
 
     return (
         <div className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-20 max-w-md mx-auto shadow-2xl overflow-hidden relative border-x border-slate-200">
-            
+
             {/* 1. APP HEADER (Curved) */}
             <div className="bg-indigo-600 pt-12 pb-24 px-8 rounded-b-[3rem] text-white relative shadow-xl z-10">
                 <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
-                
+
                 {/* Room Selector (Hidden as a simple dropdown for demo) */}
                 <div className="relative z-20 mb-6">
                     <div className="flex items-center gap-2 opacity-80 text-xs font-bold tracking-widest uppercase mb-1">
                         <Shield size={12} /> Family Connect Safe View
                     </div>
                     <div className="relative">
-                        <select 
+                        <select
                             value={selectedRoom}
                             onChange={(e) => setSelectedRoom(e.target.value)}
                             className="appearance-none bg-transparent text-3xl font-bold w-full outline-none cursor-pointer"
@@ -107,20 +108,20 @@ export default function FamilyPortal() {
 
             {/* 2. MAIN CONTENT CARD (Overlapping) */}
             <div className="px-6 -mt-16 relative z-20">
-                
+
                 {/* Wellness Score Card */}
                 <div className="bg-white p-6 rounded-3xl shadow-lg mb-6 flex items-center justify-between border border-slate-100">
-                   <div>
-                     <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-1">Wellness Score</p>
-                     <div className={`text-6xl font-black ${getScoreColor(wellness?.wellness_score || 0)}`}>
-                       {wellness?.wellness_score || "--"}
-                     </div>
-                     <p className="text-xs text-slate-400 font-medium mt-1">Based on sleep & mobility</p>
-                   </div>
-                   <div className="h-20 w-20 rounded-full bg-slate-50 flex items-center justify-center relative">
-                      <Heart className="text-rose-500 fill-rose-500 animate-pulse" size={32} />
-                      <div className="absolute inset-0 border-4 border-rose-100 rounded-full animate-ping opacity-20"></div>
-                   </div>
+                    <div>
+                        <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-1">Wellness Score</p>
+                        <div className={`text-6xl font-black ${getScoreColor(wellness?.wellness_score || 0)}`}>
+                            {wellness?.wellness_score || "--"}
+                        </div>
+                        <p className="text-xs text-slate-400 font-medium mt-1">Based on sleep & mobility</p>
+                    </div>
+                    <div className="h-20 w-20 rounded-full bg-slate-50 flex items-center justify-center relative">
+                        <Heart className="text-rose-500 fill-rose-500 animate-pulse" size={32} />
+                        <div className="absolute inset-0 border-4 border-rose-100 rounded-full animate-ping opacity-20"></div>
+                    </div>
                 </div>
 
                 {/* Status Pills */}
@@ -151,7 +152,7 @@ export default function FamilyPortal() {
                 {/* 3. DEMO ACTION: Instant Text */}
                 <div className="bg-gradient-to-br from-indigo-900 to-slate-900 rounded-3xl p-6 text-white shadow-xl shadow-indigo-200 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150"></div>
-                    
+
                     <div className="relative z-10">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="bg-white/10 p-2 rounded-lg"><Phone size={20} /></div>
@@ -161,14 +162,13 @@ export default function FamilyPortal() {
                             </div>
                         </div>
 
-                        <button 
+                        <button
                             onClick={handleInstantUpdate}
                             disabled={sending || sentSuccess}
-                            className={`w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all ${
-                                sentSuccess 
-                                ? "bg-emerald-500 text-white" 
-                                : "bg-white text-indigo-900 hover:bg-indigo-50"
-                            }`}
+                            className={`w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all ${sentSuccess
+                                    ? "bg-emerald-500 text-white"
+                                    : "bg-white text-indigo-900 hover:bg-indigo-50"
+                                }`}
                         >
                             {sending ? (
                                 <span className="animate-pulse">Sending...</span>

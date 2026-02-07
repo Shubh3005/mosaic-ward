@@ -15,9 +15,10 @@ node_modules/
 frontend/.next/
 frontend/node_modules/
 
-# ── OS ──
+# ── Misc ──
 .DS_Store
 Thumbs.db
+incidents.db
 
 # ── Misc ──
 mosaic-ward/
