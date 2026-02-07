@@ -71,7 +71,7 @@ def trigger_emergency_call():
         last_call_time = time.time()
     except Exception as e:
         print(f"❌ CALL FAILED: {e}")
-        print("Did you check your .env file?")
+        # print("Did you check your .env file?")
 @app.get("/api/status")
 async def get_status():
     """Frontend polls this to check status if WebSocket disconnects"""

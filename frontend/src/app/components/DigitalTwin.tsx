@@ -2,7 +2,7 @@
 
 import { Canvas, useFrame } from "@react-three/fiber";
 import { useRef, useState, useEffect, useMemo } from "react";
-import { OrbitControls, Grid } from "@react-three/drei";
+import { OrbitControls, Grid, Line } from "@react-three/drei";
 import * as THREE from "three";
 
 /* ═══════════════════════════════════════════════════════
@@ -25,83 +25,65 @@ export interface SkeletonFrame {
 export type SystemStatus = "NORMAL" | "FALL";
 
 /* ═══════════════════════════════════════════════════════
-   MediaPipe Pose Constants
-   33 landmarks → bone connections
+   Skeleton Topology — STRUCTURAL BONES ONLY
+   No face detail, no finger tips. Clean human silhouette.
    ═══════════════════════════════════════════════════════ */
 
 const CONNECTIONS: [number, number][] = [
-  // ── Torso ──
-  [11, 12],
-  [11, 23],
-  [12, 24],
-  [23, 24],
-  // ── Left Arm ──
-  [11, 13],
-  [13, 15],
-  [15, 17],
-  [15, 19],
-  [15, 21],
-  // ── Right Arm ──
-  [12, 14],
-  [14, 16],
-  [16, 18],
-  [16, 20],
-  [16, 22],
-  // ── Left Leg ──
-  [23, 25],
-  [25, 27],
-  [27, 29],
-  [27, 31],
-  [29, 31],
-  // ── Right Leg ──
-  [24, 26],
-  [26, 28],
-  [28, 30],
-  [28, 32],
-  [30, 32],
-  // ── Neck (nose → shoulders) ──
-  [0, 11],
-  [0, 12],
-  // ── Face detail ──
-  [0, 1],
-  [1, 2],
-  [2, 3],
-  [3, 7],
-  [0, 4],
-  [4, 5],
-  [5, 6],
-  [6, 8],
-  [9, 10],
+  // Torso frame
+  [11, 12], // shoulder span
+  [11, 23], // L shoulder → L hip
+  [12, 24], // R shoulder → R hip
+  [23, 24], // hip span
+  // Left arm
+  [11, 13], // shoulder → elbow
+  [13, 15], // elbow → wrist
+  // Right arm
+  [12, 14], // shoulder → elbow
+  [14, 16], // elbow → wrist
+  // Left leg
+  [23, 25], // hip → knee
+  [25, 27], // knee → ankle
+  // Right leg
+  [24, 26], // hip → knee
+  [26, 28], // knee → ankle
 ];
 
-/** Major joints get larger spheres */
-const MAJOR_JOINTS = new Set([
+/** Only these joints get rendered — head + major body joints */
+const DISPLAYED_JOINTS = new Set([
   0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28,
 ]);
 
-/** Pre-allocated buffer for bone vertices (2 vertices per connection × 3 floats) */
-const MAX_BONE_FLOATS = CONNECTIONS.length * 2 * 3;
-
 /* ═══════════════════════════════════════════════════════
-   Coordinate Mapping
-   MediaPipe: x[0-1] y[0-1] z[~-1 to 1]
-   Three.js:  x[-5,5] y[-5,5] z[-5,5]
-   Flip X so the avatar mirrors the user.
+   Coordinate Mapping (tighter scale)
+   MediaPipe: x[0-1] y[0-1] z[~-1..1]
+   Three.js:  mapped to approx [-3, 3]
    ═══════════════════════════════════════════════════════ */
 
 function toWorld(lm: Landmark): [number, number, number] {
   return [
-    -(lm.x - 0.5) * 10, // flip & center X → [-5, 5]
-    -(lm.y - 0.5) * 10, // flip Y (MP y↓, Three y↑) → [-5, 5]
-    -lm.z * 5, // depth
+    -(lm.x - 0.5) * 6, // mirror X, center, scale → [-3, 3]
+    -(lm.y - 0.5) * 6, // flip Y (MP y↓, Three y↑)  → [-3, 3]
+    -lm.z * 2, // gentle depth
   ];
+}
+
+function midpoint(
+  a: [number, number, number],
+  b: [number, number, number]
+): [number, number, number] {
+  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+}
+
+function isVisible(landmarks: Landmark[], idx: number): boolean {
+  return idx < landmarks.length && landmarks[idx].visibility > 0.5;
 }
 
 /* ═══════════════════════════════════════════════════════
    3D Scene Components
    ═══════════════════════════════════════════════════════ */
 
-// ── Wireframe Skeleton ─────────────────────────────────
+// ── Wireframe Skeleton (redesigned) ────────────────────
 
 function Skeleton({
   landmarks,
@@ -110,89 +92,179 @@ function Skeleton({
   landmarks: Landmark[];
   status: SystemStatus;
 }) {
-  const linesRef = useRef<THREE.LineSegments>(null);
-  const bufferRef = useRef(new Float32Array(MAX_BONE_FLOATS));
-  const attrRef = useRef<THREE.BufferAttribute | null>(null);
-
   const isFall = status === "FALL";
   const jointColor = isFall ? "#ff2244" : "#00e5ff";
-  const emissiveHex = isFall ? "#ff0000" : "#004466";
-  const emissiveIntensity = isFall ? 2.0 : 0.5;
-  const boneColor = isFall ? "#ff4466" : "#00b8d4";
+  const boneColor = isFall ? "#ff4466" : "#00d4ff";
+  const emissiveHex = isFall ? "#ff0000" : "#005577";
+  const emissiveIntensity = isFall ? 2.5 : 0.8;
 
-  // Convert landmarks → world-space tuples
+  // All 33 world-space positions (indexed by landmark ID)
   const worldPos = useMemo(
     () => landmarks.map((lm) => toWorld(lm)),
     [landmarks]
   );
 
-  // Imperatively update bone geometry when landmarks change
-  useEffect(() => {
-    if (!linesRef.current || worldPos.length === 0) return;
-
-    const buf = bufferRef.current;
-    let vertexCount = 0;
-
-    for (const [a, b] of CONNECTIONS) {
-      if (
-        a < landmarks.length &&
-        b < landmarks.length &&
-        landmarks[a].visibility > 0.5 &&
-        landmarks[b].visibility > 0.5
-      ) {
-        const pa = worldPos[a];
-        const pb = worldPos[b];
-        const off = vertexCount * 3;
-        buf[off] = pa[0];
-        buf[off + 1] = pa[1];
-        buf[off + 2] = pa[2];
-        buf[off + 3] = pb[0];
-        buf[off + 4] = pb[1];
-        buf[off + 5] = pb[2];
-        vertexCount += 2;
-      }
-    }
-
-    const geom = linesRef.current.geometry;
-    if (!attrRef.current) {
-      attrRef.current = new THREE.BufferAttribute(buf, 3);
-      geom.setAttribute("position", attrRef.current);
-    } else {
-      attrRef.current.needsUpdate = true;
-    }
-    geom.setDrawRange(0, vertexCount);
-    geom.computeBoundingSphere();
+  // Virtual points: neck (shoulder midpoint) & spine center (hip midpoint)
+  const neckPos = useMemo((): [number, number, number] | null => {
+    if (!isVisible(landmarks, 11) || !isVisible(landmarks, 12)) return null;
+    return midpoint(worldPos[11], worldPos[12]);
   }, [worldPos, landmarks]);
+
+  const hipCenter = useMemo((): [number, number, number] | null => {
+    if (!isVisible(landmarks, 23) || !isVisible(landmarks, 24)) return null;
+    return midpoint(worldPos[23], worldPos[24]);
+  }, [worldPos, landmarks]);
+
+  // Filter to only visible bone connections
+  const visibleBones = useMemo(
+    () =>
+      CONNECTIONS.filter(
+        ([a, b]) => isVisible(landmarks, a) && isVisible(landmarks, b)
+      ),
+    [landmarks]
+  );
 
   return (
     <group>
-      {/* Joint spheres */}
+      {/* ── Bones (thick lines via drei Line2) ── */}
+      {visibleBones.map(([a, b]) => (
+        <Line
+          key={`${a}-${b}`}
+          points={[worldPos[a], worldPos[b]]}
+          color={boneColor}
+          lineWidth={2.5}
+        />
+      ))}
+
+      {/* ── Virtual bones: neck + spine ── */}
+      {neckPos && isVisible(landmarks, 0) && (
+        <Line
+          points={[worldPos[0], neckPos]}
+          color={boneColor}
+          lineWidth={2.5}
+        />
+      )}
+      {neckPos && hipCenter && (
+        <Line
+          points={[neckPos, hipCenter]}
+          color={boneColor}
+          lineWidth={1.8}
+          dashed
+          dashScale={20}
+          dashSize={0.3}
+          gapSize={0.15}
+        />
+      )}
+
+      {/* ── Torso fill (faint transparent quad) ── */}
+      {isVisible(landmarks, 11) &&
+        isVisible(landmarks, 12) &&
+        isVisible(landmarks, 23) &&
+        isVisible(landmarks, 24) && (
+          <TorsoFill
+            points={[
+              worldPos[11],
+              worldPos[12],
+              worldPos[24],
+              worldPos[23],
+            ]}
+            color={jointColor}
+          />
+        )}
+
+      {/* ── Joint markers (only major body joints) ── */}
       {worldPos.map((pos, i) =>
-        landmarks[i].visibility > 0.5 ? (
-          <mesh key={i} position={pos}>
-            <sphereGeometry
-              args={[MAJOR_JOINTS.has(i) ? 0.09 : 0.045, 12, 12]}
-            />
-            <meshStandardMaterial
-              color={jointColor}
-              emissive={emissiveHex}
-              emissiveIntensity={emissiveIntensity}
-              toneMapped={false}
-            />
-          </mesh>
+        DISPLAYED_JOINTS.has(i) && isVisible(landmarks, i) ? (
+          i === 0 ? (
+            // Head — wireframe icosahedron + halo
+            <group key={i} position={pos}>
+              <mesh>
+                <icosahedronGeometry args={[0.16, 1]} />
+                <meshStandardMaterial
+                  color={jointColor}
+                  emissive={emissiveHex}
+                  emissiveIntensity={emissiveIntensity}
+                  wireframe
+                  toneMapped={false}
+                />
+              </mesh>
+              <mesh rotation={[Math.PI / 2, 0, 0]}>
+                <torusGeometry args={[0.22, 0.006, 16, 48]} />
+                <meshBasicMaterial
+                  color={jointColor}
+                  transparent
+                  opacity={0.4}
+                />
+              </mesh>
+            </group>
+          ) : (
+            // Body joints — glowing spheres
+            <mesh key={i} position={pos}>
+              <sphereGeometry args={[0.055, 14, 14]} />
+              <meshStandardMaterial
+                color={jointColor}
+                emissive={emissiveHex}
+                emissiveIntensity={emissiveIntensity}
+                toneMapped={false}
+              />
+            </mesh>
+          )
         ) : null
       )}
 
-      {/* Bone line segments */}
-      <lineSegments ref={linesRef}>
-        <bufferGeometry />
-        <lineBasicMaterial
-          color={boneColor}
-          transparent
-          opacity={0.75}
-        />
-      </lineSegments>
+      {/* ── Spine midpoint marker ── */}
+      {hipCenter && (
+        <mesh position={hipCenter}>
+          <sphereGeometry args={[0.035, 10, 10]} />
+          <meshBasicMaterial color={jointColor} transparent opacity={0.5} />
+        </mesh>
+      )}
     </group>
+  );
+}
+
+// ── Torso fill (faint transparent quad) ────────────────
+
+function TorsoFill({
+  points,
+  color,
+}: {
+  points: [number, number, number][];
+  color: string;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  useEffect(() => {
+    if (!meshRef.current || points.length < 4) return;
+    const [ls, rs, rh, lh] = points;
+    const vertices = new Float32Array([
+      // Triangle 1: LS → RS → RH
+      ls[0], ls[1], ls[2],
+      rs[0], rs[1], rs[2],
+      rh[0], rh[1], rh[2],
+      // Triangle 2: LS → RH → LH
+      ls[0], ls[1], ls[2],
+      rh[0], rh[1], rh[2],
+      lh[0], lh[1], lh[2],
+    ]);
+    const geom = meshRef.current.geometry;
+    geom.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(vertices, 3)
+    );
+    geom.computeVertexNormals();
+  }, [points]);
+
+  return (
+    <mesh ref={meshRef}>
+      <bufferGeometry />
+      <meshBasicMaterial
+        color={color}
+        transparent
+        opacity={0.04}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
   );
 }
 
@@ -200,19 +272,17 @@ function Skeleton({
 
 function HospitalBed() {
   return (
-    <group position={[3, -3.8, 0]}>
-      {/* Solid fill — very faint */}
+    <group position={[2.5, -2.2, 0]}>
       <mesh>
-        <boxGeometry args={[2.8, 0.9, 1.4]} />
+        <boxGeometry args={[2.4, 0.7, 1.2]} />
         <meshStandardMaterial
           color="#1a3a5c"
           transparent
           opacity={0.08}
         />
       </mesh>
-      {/* Wireframe overlay */}
       <mesh>
-        <boxGeometry args={[2.8, 0.9, 1.4]} />
+        <boxGeometry args={[2.4, 0.7, 1.2]} />
         <meshStandardMaterial
           color="#2a6a9c"
           wireframe
@@ -258,7 +328,7 @@ function Lighting({ status }: { status: SystemStatus }) {
       <ambientLight ref={ambientRef} intensity={0.25} color="#0a1a2a" />
       <pointLight
         ref={mainRef}
-        position={[0, 6, 4]}
+        position={[0, 5, 4]}
         intensity={1.2}
         color="#00e5ff"
         distance={25}
@@ -282,7 +352,7 @@ function SceneFog({ status }: { status: SystemStatus }) {
     }
   }, [status]);
 
-  return <fog ref={fogRef} attach="fog" args={["#070d15", 10, 25]} />;
+  return <fog ref={fogRef} attach="fog" args={["#070d15", 8, 22]} />;
 }
 
 // ── Reflective Floor Grid ──────────────────────────────
@@ -291,14 +361,14 @@ function FloorGrid({ status }: { status: SystemStatus }) {
   const isFall = status === "FALL";
   return (
     <Grid
-      position={[0, -4.6, 0]}
-      cellSize={0.6}
-      cellThickness={0.6}
+      position={[0, -2.8, 0]}
+      cellSize={0.5}
+      cellThickness={0.5}
       cellColor={isFall ? "#3a0a0a" : "#0d3b4f"}
-      sectionSize={3}
-      sectionThickness={1.2}
+      sectionSize={2.5}
+      sectionThickness={1}
       sectionColor={isFall ? "#6a1a1a" : "#1a6b7a"}
-      fadeDistance={20}
+      fadeDistance={18}
       fadeStrength={1.5}
       followCamera={false}
       infiniteGrid
@@ -322,12 +392,11 @@ function IdlePlaceholder() {
   return (
     <group>
       <mesh ref={ringRef}>
-        <torusGeometry args={[1.5, 0.015, 16, 80]} />
+        <torusGeometry args={[1.2, 0.012, 16, 80]} />
         <meshBasicMaterial color="#00e5ff" transparent opacity={0.35} />
       </mesh>
-      {/* Second ring, offset */}
       <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[1.2, 0.01, 16, 80]} />
+        <torusGeometry args={[0.9, 0.008, 16, 80]} />
         <meshBasicMaterial color="#00e5ff" transparent opacity={0.15} />
       </mesh>
     </group>
@@ -336,8 +405,6 @@ function IdlePlaceholder() {
 
 /* ═══════════════════════════════════════════════════════
    Main Export: <DigitalTwin />
-   Renders <Canvas> with the full 3D scene.
-   Connects to ws://localhost:8000/ws/skeleton
    ═══════════════════════════════════════════════════════ */
 
 interface DigitalTwinProps {
@@ -353,7 +420,6 @@ export default function DigitalTwin({
   const [status, setStatus] = useState<SystemStatus>("NORMAL");
   const [connected, setConnected] = useState(false);
 
-  // Stable refs for callbacks so WebSocket effect doesn't re-run
   const statusCbRef = useRef(onStatusChange);
   const frameCbRef = useRef(onFrameData);
   statusCbRef.current = onStatusChange;
@@ -412,7 +478,7 @@ export default function DigitalTwin({
 
   return (
     <div className="relative w-full h-full rounded-2xl overflow-hidden">
-      {/* ── Connection status badge ── */}
+      {/* Connection status badge */}
       <div className="absolute top-3 left-3 z-10 flex items-center gap-2 px-2.5 py-1 rounded-full bg-black/50 backdrop-blur-sm border border-white/5">
         <span
           className={`inline-block w-2 h-2 rounded-full ${
@@ -427,7 +493,7 @@ export default function DigitalTwin({
       </div>
 
       <Canvas
-        camera={{ position: [0, 0, 8], fov: 45 }}
+        camera={{ position: [0, 0.5, 6], fov: 45 }}
         gl={{
           antialias: true,
           alpha: true,
@@ -435,25 +501,20 @@ export default function DigitalTwin({
         }}
         style={{ background: "transparent" }}
       >
-        {/* Scene-level */}
         <SceneFog status={status} />
         <Lighting status={status} />
-
-        {/* Room */}
         <FloorGrid status={status} />
         <HospitalBed />
 
-        {/* Skeleton or idle placeholder */}
         {landmarks.length > 0 ? (
           <Skeleton landmarks={landmarks} status={status} />
         ) : (
           <IdlePlaceholder />
         )}
 
-        {/* Camera controls */}
         <OrbitControls
           enablePan={false}
-          maxDistance={14}
+          maxDistance={12}
           minDistance={3}
           autoRotate={status !== "FALL"}
           autoRotateSpeed={0.4}
