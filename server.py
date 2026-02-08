@@ -11,6 +11,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from detection_logic import calculate_velocity, is_fall_detected
 
 # --- 1. CONFIG & SETUP ---
 load_dotenv()
@@ -636,37 +637,106 @@ async def send_family_summary(room_id: str): return send_sms_summary(room_id) if
 @app.websocket("/ws/skeleton")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    
+    # --- 1. STATE TRACKING (Per Connection) ---
+    # We need to remember the previous frame's data to calculate velocity
+    prev_y = {}      # Format: {'304-A': 0.5, '301-A': 0.4...}
+    prev_time = {}   # Format: {'304-A': 17099234.0...}
+
     try:
         while True:
-            data = json.loads(await websocket.receive_text())
-            room_id = data.get("room_id", "304-A")
-            raw = data.get("status", "NORMAL")
+            # --- 2. RECEIVE DATA ---
+            # Expecting JSON: {"room_id": "304-A", "hip_y": 0.85, "timestamp": 123456789}
+            payload = await websocket.receive_text()
+            data = json.loads(payload)
             
-            if raw == "RESTING":
-                if room_id not in resting_start_times: resting_start_times[room_id] = time.time()
+            room_id = data.get("room_id", "304-A")
+            current_y = data.get("hip_y") # Normalized 0.0 (top) to 1.0 (bottom)
+            
+            # Use server time if client timestamp is missing
+            current_time = data.get("timestamp", time.time())
+            
+            # --- 3. CALCULATE PHYSICS (The New Logic) ---
+            final_status = "NORMAL" # Default
+            
+            # Only calculate if we have valid coordinate data
+            if current_y is not None:
+                # Get history for this room (default to current if first frame)
+                last_y = prev_y.get(room_id, current_y)
+                last_t = prev_time.get(room_id, current_time)
+                time_delta = current_time - last_t
+
+                # A. Calculate Velocity (Pure Function)
+                velocity = calculate_velocity(current_y, last_y, time_delta)
+                
+                # B. Check for Fall (Pure Function)
+                if is_fall_detected(velocity, current_y):
+                    final_status = "FALL"
+                elif current_y > 0.6 and velocity < 0.1:
+                    # Optional: Logic for "Resting" (Lying down but not moving fast)
+                    final_status = "RESTING"
+                
+                # C. Update History
+                prev_y[room_id] = current_y
+                prev_time[room_id] = current_time
+            
+            else:
+                # Fallback: If client didn't send coordinates, use the old 'status' field
+                final_status = data.get("status", "NORMAL")
+
+            # --- 4. HANDLE INCIDENTS (Existing Logic) ---
+            # 304-A is the 'Live' room, others might be simulated
+            
+            # Handle RESTING duration (Wellness Score)
+            if final_status == "RESTING":
+                if room_id not in resting_start_times: 
+                    resting_start_times[room_id] = time.time()
             elif room_id in resting_start_times:
-                dur = (time.time()-resting_start_times[room_id])/3600
-                if dur>0.01: update_wellness_sleep(room_id, dur)
+                # Patient moved; calculate how long they rested
+                duration = (time.time() - resting_start_times[room_id]) / 3600 # in hours
+                if duration > 0.01: 
+                    update_wellness_sleep(room_id, duration)
                 del resting_start_times[room_id]
             
-            final = raw
-            if raw == "FALL":
-                if room_states.get(room_id,{}).get("acknowledged"): final = "ACKNOWLEDGED"
+            # Handle FALL Event
+            processed_status = final_status
+            if final_status == "FALL":
+                # Check if we already know about this fall (debounce)
+                if room_states.get(room_id, {}).get("acknowledged"):
+                    processed_status = "ACKNOWLEDGED"
                 else:
-                    final = "FALL"
+                    processed_status = "FALL"
+                    # If this is a NEW incident
                     if room_id not in active_incidents:
                         iid = create_incident(room_id)
+                        # Trigger AI Analysis
                         asyncio.create_task(generate_incident_report(room_id, iid))
-                    trigger_emergency_call(room_id)  # All rooms trigger calls
-            elif raw in ["NORMAL","RESTING"]:
-                if room_states.get(room_id,{}).get("acknowledged"): room_states[room_id]["acknowledged"] = False
-                if room_id in active_incidents: resolve_incident(active_incidents[room_id])
-                final = raw
+                        # Trigger Twilio Call
+                        trigger_emergency_call(room_id)
+            
+            # Handle Recovery (Back to Normal)
+            elif final_status in ["NORMAL"]:
+                if room_states.get(room_id, {}).get("acknowledged"):
+                    room_states[room_id]["acknowledged"] = False
+                if room_id in active_incidents:
+                    resolve_incident(active_incidents[room_id])
 
-            if room_id in room_states: room_states[room_id]["status"] = final
-            data["status"] = final; data["room_id"] = room_id
+            # --- 5. BROADCAST UPDATES ---
+            # Update global state
+            if room_id in room_states:
+                room_states[room_id]["status"] = processed_status
+            
+            # Send back to frontend (Dashboard)
+            data["status"] = processed_status
+            data["velocity"] = velocity if current_y else 0 # Optional: visualized velocity
+            
             await manager.broadcast(json.dumps(data))
-    except WebSocketDisconnect: manager.disconnect(websocket)
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        print(f"❌ WebSocket Error: {e}")
+        manager.disconnect(websocket)
 
 if __name__ == "__main__":
     import uvicorn

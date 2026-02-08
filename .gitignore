@@ -22,3 +22,4 @@ incidents.db
 
 # ── Misc ──
 mosaic-ward/
+.dockerignore

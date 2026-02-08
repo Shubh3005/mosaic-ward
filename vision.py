@@ -173,8 +173,8 @@ async def stream_skeleton():
                 cv2.imshow('Mosaic Vision (Debug)', debug_frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'): break
 
-    except Exception as e:
-        print(f"❌ Error: {e}")
+    # except Exception as e:
+    #     print(f"❌ Error: {e}")
     finally:
         cap.release()
         cv2.destroyAllWindows()
